@@ -55,6 +55,8 @@ export interface ActiveGame {
     isDailyDouble: boolean;
     buzzerOpen: boolean;
     serverBuzzerOpenTime: number | null;
+    /** Inclusive deadline (server clock): buzzes accepted while receivedTime <= this after first buzz. */
+    buzzCollectDeadline: number | null;
     buzzOrder: { playerId: string; clientTime: number; receivedTime: number }[];
     eliminated: Set<string>;
     dailyDoubleWager?: number;
@@ -67,7 +69,10 @@ export interface ActiveGame {
   } | null;
 }
 
-const activeGames = new Map<string, ActiveGame>();
+const activeGames = (globalThis as any)._jeoparty_games || new Map<string, ActiveGame>();
+if (process.env.NODE_ENV !== 'production') {
+  (globalThis as any)._jeoparty_games = activeGames;
+}
 
 export async function loadBoard(boardId: number): Promise<BoardData> {
   const boardRows = await db.select({ id: schema.boards.id, title: schema.boards.title })
@@ -123,59 +128,145 @@ export async function loadBoard(boardId: number): Promise<BoardData> {
 }
 
 export async function getOrCreateGame(gameId: string): Promise<ActiveGame | null> {
-  const existing = activeGames.get(gameId);
-  if (existing) return existing;
+  let active = activeGames.get(gameId);
+  
+  if (!active) {
+    const gameRows = await db.select().from(schema.games).where(eq(schema.games.id, gameId));
+    if (!gameRows.length) return null;
+    const game = gameRows[0];
 
-  const gameRows = await db.select().from(schema.games).where(eq(schema.games.id, gameId));
-  if (!gameRows.length) return null;
-  const game = gameRows[0];
+    const board = await loadBoard(game.boardId);
 
-  const board = await loadBoard(game.boardId);
+    const playerRows = await db.select().from(schema.players).where(eq(schema.players.gameId, gameId));
+    const teamRows = await db.select().from(schema.teams).where(eq(schema.teams.gameId, gameId));
+    const usedRows = await db.select({ questionId: schema.usedQuestions.questionId })
+      .from(schema.usedQuestions).where(eq(schema.usedQuestions.gameId, gameId));
 
-  const playerRows = await db.select().from(schema.players).where(eq(schema.players.gameId, gameId));
-  const teamRows = await db.select().from(schema.teams).where(eq(schema.teams.gameId, gameId));
-  const usedRows = await db.select({ questionId: schema.usedQuestions.questionId })
-    .from(schema.usedQuestions).where(eq(schema.usedQuestions.gameId, gameId));
+    const teamsMap = new Map<number, TeamData>();
+    for (const t of teamRows) {
+      teamsMap.set(t.id, { id: t.id, name: t.name, position: t.position, playerIds: [] });
+    }
 
-  const teamsMap = new Map<number, TeamData>();
-  for (const t of teamRows) {
-    teamsMap.set(t.id, { id: t.id, name: t.name, position: t.position, playerIds: [] });
+    const playersMap = new Map<string, { displayName: string; score: number; socketId: string; teamId: number | null }>();
+    for (const p of playerRows) {
+      playersMap.set(p.id, {
+        displayName: p.displayName,
+        score: p.score ?? 0,
+        socketId: p.socketId ?? '',
+        teamId: p.teamId ?? null,
+      });
+      if (p.teamId != null) {
+        teamsMap.get(p.teamId)?.playerIds.push(p.id);
+      }
+    }
+
+    active = {
+      gameId,
+      boardId: game.boardId,
+      hostSocketId: '',
+      status: game.status as ActiveGame['status'],
+      players: playersMap,
+      teams: teamsMap,
+      teamMode: !!game.teamMode,
+      board,
+      usedQuestions: new Set(usedRows.map((u) => u.questionId)),
+      currentPicker: game.currentPickerId ?? null,
+      currentRound: game.currentRound ?? 0,
+      currentQuestion: null,
+      finalJeopardy: null,
+    };
+    activeGames.set(gameId, active);
+  } else {
+    // Refresh players and teams from DB to handle new joins or score changes outside WS
+    console.log(`[GameState] Refreshing players for game ${gameId}`);
+    const playerRows = await db.select().from(schema.players).where(eq(schema.players.gameId, gameId));
+    console.log(`[GameState] Found ${playerRows.length} players in DB for game ${gameId}`);
+    for (const p of playerRows) {
+      if (!active.players.has(p.id)) {
+        console.log(`[GameState] Adding NEW player ${p.displayName} (${p.id}) to cache`);
+        active.players.set(p.id, {
+          displayName: p.displayName,
+          score: p.score ?? 0,
+          socketId: p.socketId ?? '',
+          teamId: p.teamId ?? null,
+        });
+        if (p.teamId != null) {
+          const t = active.teams.get(p.teamId);
+          if (t && !t.playerIds.includes(p.id)) t.playerIds.push(p.id);
+        }
+      } else {
+        // Update existing player scores/teams in case they changed in DB
+        const existing = active.players.get(p.id)!;
+        existing.displayName = p.displayName;
+        existing.score = p.score ?? 0;
+        existing.teamId = p.teamId ?? null;
+      }
+    }
   }
 
-  const playersMap = new Map<string, { displayName: string; score: number; socketId: string; teamId: number | null }>();
+  return active;
+}
+
+/**
+ * Force-refreshes the in-memory game state from the database.
+ * Useful for ensuring clients get the absolute latest state on sync.
+ */
+export async function refreshGameFromDb(gameId: string): Promise<ActiveGame | null> {
+  const active = activeGames.get(gameId);
+  if (!active) return getOrCreateGame(gameId);
+
+  // Reload players
+  const playerRows = await db.select().from(schema.players).where(eq(schema.players.gameId, gameId));
+  active.players.clear();
+  // Clear team associations first
+  for (const t of active.teams.values()) t.playerIds = [];
+
   for (const p of playerRows) {
-    playersMap.set(p.id, {
+    active.players.set(p.id, {
       displayName: p.displayName,
       score: p.score ?? 0,
       socketId: p.socketId ?? '',
       teamId: p.teamId ?? null,
     });
     if (p.teamId != null) {
-      teamsMap.get(p.teamId)?.playerIds.push(p.id);
+      const t = active.teams.get(p.teamId);
+      if (t) t.playerIds.push(p.id);
     }
   }
 
-  const active: ActiveGame = {
-    gameId,
-    boardId: game.boardId,
-    hostSocketId: '',
-    status: game.status as ActiveGame['status'],
-    players: playersMap,
-    teams: teamsMap,
-    teamMode: !!game.teamMode,
-    board,
-    usedQuestions: new Set(usedRows.map((u) => u.questionId)),
-    currentPicker: game.currentPickerId ?? null,
-    currentRound: game.currentRound ?? 0,
-    currentQuestion: null,
-    finalJeopardy: null,
-  };
-  activeGames.set(gameId, active);
+  // Reload used questions
+  const usedRows = await db.select({ questionId: schema.usedQuestions.questionId })
+    .from(schema.usedQuestions).where(eq(schema.usedQuestions.gameId, gameId));
+  active.usedQuestions = new Set(usedRows.map(u => u.questionId));
+
+  // Reload game status/round
+  const gameRows = await db.select().from(schema.games).where(eq(schema.games.id, gameId));
+  if (gameRows.length) {
+    active.status = gameRows[0].status as ActiveGame['status'];
+    active.currentRound = gameRows[0].currentRound ?? 0;
+    active.currentPicker = gameRows[0].currentPickerId ?? null;
+  }
+
   return active;
 }
 
 export function getGame(gameId: string) {
   return activeGames.get(gameId);
+}
+
+export async function addPlayerToGame(gameId: string, player: { id: string, displayName: string, score?: number, teamId?: number | null }) {
+  const g = activeGames.get(gameId);
+  if (!g) return;
+  g.players.set(player.id, {
+    displayName: player.displayName,
+    score: player.score ?? 0,
+    socketId: '',
+    teamId: player.teamId ?? null,
+  });
+  if (player.teamId != null) {
+    const t = g.teams.get(player.teamId);
+    if (t && !t.playerIds.includes(player.id)) t.playerIds.push(player.id);
+  }
 }
 
 export function getAllGames() {
@@ -264,6 +355,7 @@ export function boardState(game: ActiveGame) {
     currentPicker: game.currentPicker,
     totalRounds: game.board.rounds.length,
     teamMode: game.teamMode,
+    serverTime: Date.now(),
     status: game.status,
   };
 }

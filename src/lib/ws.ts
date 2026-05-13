@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { eq } from 'drizzle-orm';
 import { db, schema } from './db';
@@ -24,7 +24,10 @@ type SocketMeta = {
   playerId?: string;
 };
 
-const sockets = new Map<string, { ws: WebSocket; meta: SocketMeta }>();
+const sockets = (globalThis as any)._jeoparty_sockets || new Map<string, { ws: WebSocket; meta: SocketMeta }>();
+if (process.env.NODE_ENV !== 'production') {
+  (globalThis as any)._jeoparty_sockets = sockets;
+}
 const gameTimers = new Map<string, NodeJS.Timeout[]>();
 
 function trackTimer(gameId: string, timer: NodeJS.Timeout) {
@@ -43,15 +46,41 @@ function send(ws: WebSocket, type: string, payload: Record<string, unknown> = {}
 }
 
 function broadcast(game: ActiveGame, type: string, payload: Record<string, unknown> = {}) {
+  console.log(`[WS] Broadcasting ${type} to game ${game.gameId}`);
+  console.log(`[WS] Total connected sockets: ${sockets.size}`);
+  let count = 0;
   for (const { ws, meta } of sockets.values()) {
-    if (meta.gameId === game.gameId) send(ws, type, payload);
+    console.log(`[WS] Checking socket: id=${meta.socketId}, role=${meta.role}, gameId='${meta.gameId}' vs target='${game.gameId}'`);
+    if (meta.gameId === game.gameId) {
+      console.log(`[WS] Match found! Sending to ${meta.socketId}`);
+      send(ws, type, payload);
+      count++;
+    }
   }
+  console.log(`[WS] Broadcast reached ${count} sockets`);
 }
 
 function sendToHost(game: ActiveGame, type: string, payload: Record<string, unknown> = {}) {
   if (!game.hostSocketId) return;
   const host = sockets.get(game.hostSocketId);
   if (host) send(host.ws, type, payload);
+}
+
+/**
+ * Broadcasts the entire current state of the game to all connected clients.
+ * This is the ultimate "fix" for any client that gets out of sync.
+ */
+export async function syncGame(gameId: string) {
+  const { refreshGameFromDb, boardState } = await import('./gameState');
+  const game = await refreshGameFromDb(gameId);
+  if (!game) {
+    console.error(`[WS] syncGame: Game not found for ${gameId}`);
+    return;
+  }
+  
+  const state = boardState(game);
+  console.log(`[WS] syncGame: Broadcasting state for ${gameId}. Players: ${state.scores.length}`);
+  broadcast(game, 'SYNC_STATE', state);
 }
 
 function findQuestion(game: ActiveGame, questionId: number) {
@@ -63,45 +92,66 @@ function findQuestion(game: ActiveGame, questionId: number) {
 }
 
 async function closeQuestion(game: ActiveGame) {
+  clearGameTimers(game.gameId);
   if (!game.currentQuestion) return;
   const questionId = game.currentQuestion.questionId;
   game.usedQuestions.add(questionId);
   await markQuestionUsed(game.gameId, questionId);
   game.currentQuestion = null;
   broadcast(game, 'QUESTION_CLOSED');
+  console.log(`[WS] Question closed: ${questionId}`);
   broadcast(game, 'BOARD_STATE', boardState(game));
 }
 
 function chooseWinner(game: ActiveGame) {
   const current = game.currentQuestion;
   if (!current) return null;
-  const eligible = current.buzzOrder
-    .filter((buzz) => !current.eliminated.has(buzz.playerId))
-    .sort((a, b) => a.clientTime - b.clientTime || a.receivedTime - b.receivedTime);
-  return eligible[0] ?? null;
+  const eligible = current.buzzOrder.filter((buzz) => !current.eliminated.has(buzz.playerId));
+  if (!eligible.length) return null;
+  let minT = Infinity;
+  for (const b of eligible) minT = Math.min(minT, b.clientTime);
+  const tier1 = eligible.filter((b) => b.clientTime === minT);
+  if (tier1.length === 1) return tier1[0];
+  let minR = Infinity;
+  for (const b of tier1) minR = Math.min(minR, b.receivedTime);
+  const tier2 = tier1.filter((b) => b.receivedTime === minR);
+  if (tier2.length === 1) return tier2[0];
+  return tier2[randomInt(tier2.length)]!;
 }
 
-function openBuzzer(game: ActiveGame, windowMs = 5000) {
+async function resolveBuzzerWinner(gameId: string) {
+  const game = await getOrCreateGame(gameId);
+  if (!game?.currentQuestion) return;
+  const cq = game.currentQuestion;
+  if (!cq.buzzerOpen) return;
+  const winner = chooseWinner(game);
+  if (!winner) {
+    cq.buzzerOpen = false;
+    await closeQuestion(game);
+    return;
+  }
+  cq.buzzerOpen = false;
+  broadcast(game, 'BUZZER_LOCKED');
+  const player = game.players.get(winner.playerId);
+  const openAt = cq.serverBuzzerOpenTime ?? winner.clientTime;
+  const timeSec = (winner.clientTime - openAt) / 1000;
+  broadcast(game, 'BUZZ_WINNER', {
+    playerId: winner.playerId,
+    displayName: player?.displayName ?? 'Player',
+    time: Math.round(timeSec * 1000) / 1000,
+  });
+}
+
+function openBuzzer(game: ActiveGame) {
   if (!game.currentQuestion) return;
   clearGameTimers(game.gameId);
-  game.currentQuestion.buzzerOpen = true;
-  game.currentQuestion.serverBuzzerOpenTime = Date.now();
-  broadcast(game, 'BUZZER_OPEN', { serverTime: game.currentQuestion.serverBuzzerOpenTime, windowMs });
-
-  const timer = setTimeout(async () => {
-    if (!game.currentQuestion || !game.currentQuestion.buzzerOpen) return;
-    const winner = chooseWinner(game);
-    if (!winner) {
-      game.currentQuestion.buzzerOpen = false;
-      await closeQuestion(game);
-      return;
-    }
-    game.currentQuestion.buzzerOpen = false;
-    broadcast(game, 'BUZZER_LOCKED');
-    const player = game.players.get(winner.playerId);
-    broadcast(game, 'BUZZ_WINNER', { playerId: winner.playerId, displayName: player?.displayName ?? 'Player' });
-  }, windowMs + 30);
-  trackTimer(game.gameId, timer);
+  const cq = game.currentQuestion;
+  cq.buzzerOpen = true;
+  cq.serverBuzzerOpenTime = Date.now();
+  cq.buzzOrder = [];
+  cq.buzzCollectDeadline = null;
+  console.log(`[WS] Buzzer opened for game ${game.gameId}`);
+  broadcast(game, 'BUZZER_OPEN', { serverTime: cq.serverBuzzerOpenTime });
 }
 
 async function judgeAnswer(game: ActiveGame, playerId: string, correct: boolean) {
@@ -182,9 +232,10 @@ export function initWebSockets(server: import('node:http').Server) {
 
   wss.on('connection', async (ws, req: IncomingMessage) => {
     const requestUrl = new URL(req.url ?? '/', `http://${req.headers.host}`);
-    const gameId = requestUrl.searchParams.get('gameId');
+    const gameIdRaw = requestUrl.searchParams.get('gameId');
+    if (!gameIdRaw) return ws.close();
+    const gameId = gameIdRaw.toUpperCase().trim();
     const token = requestUrl.searchParams.get('token');
-    if (!gameId) return ws.close();
 
     const game = await getOrCreateGame(gameId);
     if (!game) return ws.close();
@@ -214,16 +265,22 @@ export function initWebSockets(server: import('node:http').Server) {
     }
 
     sockets.set(meta.socketId, { ws, meta });
-    send(ws, 'BOARD_STATE', boardState(game));
+    console.log(`[WS] Socket connected: ${meta.socketId} (role: ${meta.role}, gameId: ${meta.gameId})`);
+    
+    // Immediate full sync for the new connection
+    await syncGame(gameId);
 
     if (meta.role === 'player' && meta.playerId) {
       const p = game.players.get(meta.playerId);
+      console.log(`[WS] Broadcasting PLAYER_JOINED for ${p?.displayName || 'Unknown'} (${meta.playerId}) in game ${gameId}`);
+      // Notify others of the join specifically, then sync everyone
       broadcast(game, 'PLAYER_JOINED', { 
         playerId: meta.playerId, 
         displayName: p?.displayName ?? 'Player', 
         score: p?.score ?? 0,
         teamId: p?.teamId ?? null 
       });
+      await syncGame(gameId);
     }
 
     ws.on('message', async (raw) => {
@@ -233,7 +290,11 @@ export function initWebSockets(server: import('node:http').Server) {
       if (!current) return;
 
       if (data.type === 'PING') {
-        send(ws, 'PONG', { serverTime: Date.now() });
+        const pong: Record<string, unknown> = { serverTime: Date.now() };
+        if (data.clientTime != null && typeof data.clientTime === 'number') {
+          pong.clientTime = data.clientTime;
+        }
+        send(ws, 'PONG', pong);
         return;
       }
 
@@ -244,6 +305,11 @@ export function initWebSockets(server: import('node:http').Server) {
           current.status = 'active';
           broadcast(current, 'GAME_START');
           broadcast(current, 'BOARD_STATE', boardState(current));
+        }
+
+        if (data.type === 'SKIP_QUESTION') {
+          if (!current.currentQuestion) return;
+          await closeQuestion(current);
         }
 
         if (data.type === 'OPEN_QUESTION' && current.status !== 'finished') {
@@ -257,6 +323,7 @@ export function initWebSockets(server: import('node:http').Server) {
             isDailyDouble: found.question.isDailyDouble,
             buzzerOpen: false,
             serverBuzzerOpenTime: null,
+            buzzCollectDeadline: null,
             buzzOrder: [],
             eliminated: new Set(),
           };
@@ -395,6 +462,7 @@ export function initWebSockets(server: import('node:http').Server) {
             isDailyDouble: found.question.isDailyDouble,
             buzzerOpen: false,
             serverBuzzerOpenTime: null,
+            buzzCollectDeadline: null,
             buzzOrder: [],
             eliminated: new Set(),
           };
@@ -411,11 +479,18 @@ export function initWebSockets(server: import('node:http').Server) {
         if (data.type === 'BUZZ') {
           const cq = current.currentQuestion;
           if (!cq || !cq.buzzerOpen || cq.eliminated.has(meta.playerId)) return;
+          const now = Date.now();
           const t = Number(data.clientTime);
           const open = cq.serverBuzzerOpenTime ?? 0;
-          if (t < open || t > open + 5000) return;
+          if (!Number.isFinite(t) || t < open || t > now + 2000) return;
           if (cq.buzzOrder.some((b) => b.playerId === meta.playerId)) return;
-          cq.buzzOrder.push({ playerId: meta.playerId, clientTime: t, receivedTime: Date.now() });
+          if (cq.buzzOrder.length > 0 && cq.buzzCollectDeadline != null && now > cq.buzzCollectDeadline) return;
+          cq.buzzOrder.push({ playerId: meta.playerId, clientTime: t, receivedTime: now });
+          if (cq.buzzOrder.length === 1) {
+            cq.buzzCollectDeadline = now + 5000;
+            const timer = setTimeout(() => void resolveBuzzerWinner(gameId), 5000);
+            trackTimer(gameId, timer);
+          }
         }
 
         if (data.type === 'DAILY_DOUBLE_WAGER' && current.currentQuestion?.isDailyDouble) {

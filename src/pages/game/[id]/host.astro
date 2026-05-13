@@ -46,7 +46,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c
 const seed = {
   rounds,
   usedQuestionIds: usedRows.map(u => u.questionId),
-  initialPlayers: playerRows.map(p => [p.id, { id: p.id, displayName: p.displayName, score: p.score ?? 0, teamId: p.teamId ?? null }]),
+  initialPlayers: playerRows.map(p => [p.id, { playerId: p.id, displayName: p.displayName, score: p.score ?? 0, teamId: p.teamId ?? null }]),
   initialTeams: teamRows.map(t => [t.id, { id: t.id, name: t.name, position: t.position, playerIds: [] }]),
   teamMode: game.teamMode ?? false,
   currentRound: game.currentRound ?? 0,
@@ -55,375 +55,508 @@ const seed = {
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width" />
-  <title>Host Controls — {gameId}</title>
-  <style>
-    .host-panel { padding: 1rem; max-width: 1400px; margin: 0 auto; }
-    .two-col { display: grid; grid-template-columns: 1fr 360px; gap: 1rem; align-items: start; }
-    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
-    .answer-hidden { display: none; }
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Host — {gameId}</title>
+  <style is:global>
+    html, body { height: 100%; overflow: hidden; background: var(--bg); margin: 0; }
+    #scale-root { 
+      width: 390px; 
+      height: 844px; 
+      background: var(--bg); 
+      position: absolute; 
+      left: 50%; 
+      top: 50%; 
+      transform-origin: center center;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    
+    /* Premium UI Components from Mockup */
+    .app-bar { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 10px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+    .logo { font-family: 'Anton', sans-serif; font-size: 24px; color: var(--gold); letter-spacing: 0.04em; line-height: 1; display: flex; align-items: center; gap: 8px; }
+    .badge { font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: var(--dim); letter-spacing: 0.22em; padding: 4px 8px; background: var(--bg2); border-radius: 4px; font-weight: 700; text-transform: uppercase; }
+    .game-code { font-family: 'Space Grotesk', sans-serif; font-size: 13px; color: var(--dim); letter-spacing: 0.18em; font-weight: 700; }
+    .menu-btn { width: 34px; height: 34px; border-radius: 10px; background: var(--bg2); color: var(--ink); font-size: 18px; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    
+    .status-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--bg2); flex-shrink: 0; }
+    .round-info { font-family: 'Anton', sans-serif; font-size: 13px; letter-spacing: 0.12em; color: var(--ink); text-transform: uppercase; }
+    
+    .scroll-area { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+    
+    .clue-card { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; position: relative; }
+    .clue-cat { font-family: 'Anton', sans-serif; font-size: 14px; letter-spacing: 0.06em; color: var(--ink); text-transform: uppercase; }
+    .clue-val { font-family: 'Anton', sans-serif; font-size: 18px; color: var(--gold); position: absolute; top: 14px; right: 16px; }
+    .label { font-size: 9px; color: var(--dim); letter-spacing: 0.22em; font-family: 'Space Grotesk', sans-serif; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
+    .clue-text { font-family: 'Anton', sans-serif; font-size: 18px; line-height: 1.2; letter-spacing: 0.01em; color: var(--ink); margin-top: 4px; }
+    
+    .answer-row { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .answer-text { font-family: 'Anton', sans-serif; font-size: 18px; color: var(--mint); letter-spacing: 0.04em; }
+    
+    .judge-panel { background: var(--bg2); border-radius: 12px; padding: 14px 14px 12px; border: 2px solid transparent; transition: all 0.3s ease; }
+    .judge-active { border-color: var(--magenta); box-shadow: 0 0 32px rgba(255, 61, 142, 0.2); }
+    
+    .buzz-status { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .buzz-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--magenta); box-shadow: 0 0 10px var(--magenta); animation: jp-pulse 1.2s infinite; }
+    .buzz-label { font-size: 10px; color: var(--dim); letter-spacing: 0.22em; font-weight: 700; text-transform: uppercase; }
+    
+    .judge-target { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .avatar-large { width: 48px; height: 48px; border-radius: 12px; background: var(--magenta); display: flex; align-items: center; justify-content: center; font-size: 26px; color: #0E0B22; font-weight: 800; }
+    .judge-name { font-family: 'Anton', sans-serif; font-size: 22px; letter-spacing: 0.04em; color: var(--ink); line-height: 1.1; }
+    
+    .judge-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-judge { border: none; border-radius: 10px; cursor: pointer; font-family: 'Anton', sans-serif; font-size: 18px; letter-spacing: 0.06em; padding: 14px 0; color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .btn-wrong { background: var(--red); }
+    .btn-correct { background: var(--mint); color: #0E0B22; }
+    
+    .queue-row { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .queue-chip { font-family: 'Anton', sans-serif; font-size: 11px; letter-spacing: 0.06em; color: var(--ink); background: var(--bg); padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line2); }
+    
+    /* Player list — matches mock/project/jp-host.jsx PlayersList + MiniStep */
+    .player-row { display: flex; align-items: center; gap: 10px; background: #120D2E; border: 1px solid transparent; padding: 8px 10px; border-radius: 10px; transition: background 0.2s ease, border-color 0.2s ease; }
+    .row-highlight { background: var(--bg3); }
+    .player-rank { font-family: 'Anton', sans-serif; font-size: 12px; color: var(--dim); width: 12px; flex-shrink: 0; }
+    .avatar-small { width: 26px; height: 26px; border-radius: 6px; background: var(--gold); display: flex; align-items: center; justify-content: center; font-size: 13px; color: #0E0B22; font-weight: 700; flex-shrink: 0; }
+    .player-name-row { flex: 1; min-width: 0; font-family: 'Anton', sans-serif; font-size: 14px; letter-spacing: 0.04em; color: var(--ink); }
+    /* Grid keeps − / $ / + on one optical row (Anton score vs square buttons). */
+    .player-score-group {
+      display: grid;
+      grid-template-columns: 22px minmax(52px, max-content) 22px;
+      align-items: center;
+      column-gap: 4px;
+      flex-shrink: 0;
+    }
+    .score-display {
+      font-family: 'Anton', sans-serif;
+      font-size: 14px;
+      line-height: 1;
+      color: var(--gold);
+      min-width: 52px;
+      text-align: right;
+      margin: 0;
+      padding: 0;
+      justify-self: end;
+      align-self: center;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      min-height: 22px;
+      font-variant-numeric: tabular-nums;
+    }
+    .score-display.negative { color: var(--red); }
+    .mini-stepper { width: 28px; height: 28px; border-radius: 6px; background: var(--bg); color: var(--ink); font-size: 16px; border: 1.5px solid var(--line); display: flex; align-items: center; justify-content: center; cursor: pointer; font-weight: 700; transition: all 0.1s ease; }
+    .player-row .mini-stepper {
+      width: 22px;
+      height: 22px;
+      min-width: 22px;
+      min-height: 22px;
+      border-radius: 5px;
+      font-size: 13px;
+      border-width: 1px;
+      padding: 0;
+      margin: 0;
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      justify-self: center;
+      align-self: center;
+    }
+    .mini-stepper:active { transform: scale(0.9); background: var(--bg2); }
+    
+    .tab-bar { display: none; }
+    
+    /* Reveal button in clue card */
+    .btn-reveal { background: var(--bg3); border: 1.5px solid var(--line); border-radius: 8px; color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 700; padding: 8px 12px; display: flex; align-items: center; gap: 6px; cursor: pointer; text-transform: uppercase; }
+    
+    .judging-result-info { font-size: 11px; color: var(--dim); text-align: center; margin-top: 10px; }
+    
+    .player-list-header { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; padding: 0 2px; }
+    .player-header-label { font-size: 10px; color: var(--dim); letter-spacing: 0.22em; font-weight: 700; text-transform: uppercase; }
+    .player-list-hint { letter-spacing: 0.04em; font-weight: 500; text-transform: none; }
+    .players-container { display: flex; flex-direction: column; gap: 6px; }
+
+    /* Modals */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(14, 11, 34, 0.95); backdrop-filter: blur(10px); z-index: 1000; padding: 20px; display: flex; flex-direction: column; }
+    .board-grid-modal { display: grid; gap: 6px; flex: 1; overflow: auto; grid-auto-rows: 1fr; margin-top: 20px; }
+    
+    .btn-close-modal { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border-radius: 50%; background: var(--bg3); border: 1px solid var(--line); color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
   </style>
 </head>
 <body>
-  <div class="host-panel">
-    <!-- Top bar -->
-    <div class="flex-between" style="padding:.75rem 0 1rem;">
-      <div style="font-family:'Fredoka',sans-serif; font-size:1.8rem; font-weight:700; color:var(--accent);">
-        Host Controls — <span style="color:var(--text);">{gameId}</span>
+  <div id="scale-root">
+    
+    <!-- App Bar -->
+    <header class="app-bar">
+      <div class="logo">JEOPARTY<span class="badge">HOST</span></div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span class="game-code" id="gameCodeDisplay">{gameId}</span>
+        <button class="menu-btn" id="menuBtn">⋯</button>
       </div>
-      <div class="flex" style="gap:.5rem; flex-wrap:wrap; align-items:center;">
-        <span id="wsStatus" style="font-size:.7rem; padding:.2rem .5rem; border-radius:4px; background:var(--bg3); color:var(--dim); margin-right:.5rem;">CONNECTING...</span>
-        <a href={`/game/${gameId}`} target="_blank"><button class="secondary" style="font-size:.85rem;">📺 Presenter View</button></a>
-        <button id="startGame" class="accent control-btn" disabled>▶ Start Game</button>
-        <button id="startFinal" class="secondary control-btn" disabled>🏁 Final Jeopardy</button>
-        <button id="nextRound" class="secondary control-btn" disabled>→ Next Round</button>
-        <button id="endGame" class="secondary control-btn" style="color:var(--bad);" disabled>■ End Game</button>
+    </header>
+
+    <!-- Round Bar -->
+    <div class="status-bar">
+      <div style="display: flex; align-items: center;">
+        <span class="round-info" id="roundInfo">ROUND 1 · 0/0</span>
+        {seed.teamMode && <span class="teams-badge">TEAMS</span>}
+      </div>
+      <div style="display: flex; gap: 6px;">
+        <button class="mini-stepper" style="width: auto; padding: 0 8px; height: 26px; font-size: 10px; letter-spacing: 0.1em;" id="showBoardBtn">BOARD</button>
+        <button class="mini-stepper" style="width: auto; padding: 0 8px; height: 26px; font-size: 10px; letter-spacing: 0.1em;" id="nextRoundBtn">NEXT →</button>
       </div>
     </div>
 
-    <div class="two-col">
-      <!-- Left: board + active question -->
-      <div class="grid">
-        <div class="card">
-          <div class="flex-between" style="margin-bottom:.75rem;">
-            <h3>Board</h3>
-            <div id="roundLabel" class="small"></div>
+    <!-- Main Content Area -->
+    <main class="scroll-area" id="mainContent">
+      
+      <!-- Clue Card -->
+      <div class="clue-card" id="clueCard">
+        <div class="clue-val" id="clueValueDisplay">$0</div>
+        <div class="clue-cat" id="clueCatDisplay">Lobby</div>
+        <div style="height: 1px; background: var(--line); margin: 8px 0;"></div>
+        <div class="label">CLUE</div>
+        <div class="clue-text" id="clueTextDisplay">Waiting for players to join...</div>
+        
+        <div id="answerSection" class="hidden">
+          <div class="answer-row">
+            <div style="min-width: 0; flex: 1;">
+              <div class="label">ANSWER</div>
+              <div class="answer-text" id="answerTextDisplay">...</div>
+            </div>
+            <button class="btn-reveal" id="revealBtn">
+              <span>📺</span> REVEAL ON TV
+            </button>
           </div>
-          <div id="board" class="board-grid"></div>
-        </div>
-
-        <div class="card grid" id="questionPanel">
-          <h3>Active Question</h3>
-          <p id="questionText" class="muted" style="font-size:1.05rem;">No question open.</p>
-          <p id="answerText" class="answer-hidden" style="color:var(--ok); font-size:1.05rem;"></p>
-          <button id="toggleAnswer" class="secondary" style="width:fit-content;">Reveal Answer</button>
-          <div id="judgeButtons" class="grid" style="gap:.5rem;"></div>
-        </div>
-
-        <div class="card grid" id="finalPanel" style="display:none;">
-          <h3>Final Jeopardy Judging</h3>
-          <div id="finalList" class="grid"></div>
         </div>
       </div>
 
-      <!-- Right: players, QR, score adjust -->
-      <div class="grid" style="align-content:start;">
-        <div class="card grid">
-          <h3>Join Info</h3>
-          <div class="join-code" style="font-size:2.5rem; text-align:center;">{gameId}</div>
-          <div style="display:flex; justify-content:center;" set:html={qrSvg.replace(/width="\d+"/, 'width="160"').replace(/height="\d+"/, 'height="160"')} />
-          <p class="small" style="text-align:center;">{joinUrl}</p>
+      <div id="skipClueWrap" class="hidden" style="margin-top: 8px;">
+        <button type="button" class="btn-reveal" id="skipClueBtn" style="width: 100%; justify-content: center;">Skip clue (no buzz)</button>
+      </div>
+
+      <!-- Judging Panel -->
+      <div class="judge-panel hidden" id="judgePanel">
+        <div class="buzz-status">
+          <div class="buzz-dot"></div>
+          <div class="buzz-label">BUZZED IN · <span id="buzzTimeDisplay">0.42s</span></div>
+        </div>
+        
+        <div class="judge-target">
+          <div class="avatar-large" id="judgeAvatar">✦</div>
+          <div style="flex: 1; min-width: 0;">
+            <div class="judge-name" id="judgeNameDisplay">PLAYER</div>
+          </div>
         </div>
 
-        <div class="card grid">
-          <h3>Players <span id="playerCount" class="muted small"></span></h3>
-          <ul id="playerList" class="scores"></ul>
+        <div class="judge-actions">
+          <button class="btn-judge btn-wrong" id="btnJudgeWrong">✕ WRONG</button>
+          <button class="btn-judge btn-correct" id="btnJudgeCorrect">✓ CORRECT</button>
         </div>
+        <div class="judging-result-info" id="judgeRewardNote">+ $0 → PLAYER</div>
 
-        <div class="card grid" id="teamPanel" style="display:none;">
-          <h3>Teams</h3>
-          <div id="teamList" class="grid"></div>
-        </div>
-
-        <div class="card grid">
-          <h3>Adjust Score</h3>
-          <select id="scorePlayer"></select>
-          <input id="scoreValue" type="number" placeholder="New score" />
-          <button id="applyScore" class="secondary">Apply</button>
+        <div class="queue-row" id="buzzQueueRow" style="display: none;">
+          <div class="label" style="margin-bottom: 0; margin-right: 8px;">QUEUE</div>
+          <div id="queueChips" style="display: flex; gap: 6px;"></div>
         </div>
       </div>
+
+      <!-- Start Game CTA (Lobby only) -->
+      <div id="lobbyCTA" class="clue-card" style="text-align: center; border-color: var(--gold);">
+        <button id="startGameBtn" class="btn-judge btn-correct" style="width: 100%; margin-bottom: 12px;">
+          ▶ START GAME
+        </button>
+        <div class="label" style="margin: 0;">Game code: <span style="color: var(--ink);">{gameId}</span></div>
+      </div>
+
+      <!-- Players List -->
+      <div id="listSection">
+        <div class="player-list-header">
+          <div class="player-header-label" id="listTitleDisplay">PLAYERS · 0</div>
+          <div class="player-header-label player-list-hint">tap ± to adjust</div>
+        </div>
+        <div id="playersContainer" class="players-container">
+          <!-- Players injected here -->
+        </div>
+      </div>
+    </main>
+
+
+    <!-- Modals -->
+    <div id="boardModal" class="modal-overlay hidden">
+      <button class="btn-close-modal" id="closeBoardModal">✕</button>
+      <div style="font-family: 'Anton', sans-serif; font-size: 24px; color: var(--gold); text-align: center;">THE BOARD</div>
+      <div class="board-grid-modal" id="boardGrid"></div>
     </div>
+
+    <div id="menuOverlay" class="modal-overlay hidden" style="justify-content: center; align-items: center; gap: 12px;">
+      <button class="btn-close-modal" id="closeMenuOverlay">✕</button>
+      <button class="mini-stepper" style="width: 200px; height: 50px; font-size: 14px;" id="menuPresenter">📺 Presenter View</button>
+      <button class="mini-stepper" style="width: 200px; height: 50px; font-size: 14px;" id="menuFinal">🏁 Final Jeopardy</button>
+      <button class="mini-stepper" style="width: 200px; height: 50px; font-size: 14px; color: var(--red);" id="menuEnd">■ End Game</button>
+    </div>
+
   </div>
 
   <script is:inline define:vars={{ gameId, hostToken, seed }}>
     // @ts-nocheck
     const rounds       = seed.rounds;
     const players      = new Map(seed.initialPlayers);
-    const teams        = new Map(seed.initialTeams);
-    let teamMode       = seed.teamMode;
     let currentRound   = seed.currentRound;
     let usedSet        = new Set(seed.usedQuestionIds);
     let openQuestion   = null;
-    let finalResults   = [];
+    let buzzWinnerId   = null;
+    let lastStateTime  = 0;
 
-    // Populate team playerIds from players
-    for (const [, p] of players) {
-      if (p.teamId != null && teams.has(p.teamId)) {
-        teams.get(p.teamId).playerIds.push(p.id);
-      }
+    function formatDollars(n) {
+      return n < 0 ? `-$${Math.abs(n).toLocaleString()}` : `$${n.toLocaleString()}`;
     }
+
+    function answerTextForOpenQuestion() {
+      if (!openQuestion) return '';
+      for (const r of rounds) {
+        for (const c of r.categories) {
+          const q = c.questions.find((x) => x.id === openQuestion.questionId);
+          if (q?.answer) return q.answer;
+        }
+      }
+      return '';
+    }
+
+    /* ── Scaling ───────────────────────────────────────────────────────────── */
+    function scale() {
+      const root = document.getElementById('scale-root');
+      const tw = 390; const th = 844;
+      const s = Math.min(window.innerWidth / tw, window.innerHeight / th);
+      root.style.width = tw + 'px';
+      root.style.height = th + 'px';
+      root.style.transform = `translate(-50%, -50%) scale(${s})`;
+    }
+    scale();
+    window.addEventListener('resize', scale);
 
     /* ── WebSocket ──────────────────────────────────────────────────────── */
     let ws;
+    function sendPing() {
+      if (!ws || ws.readyState !== 1) return;
+      const t = Date.now();
+      ws.send(JSON.stringify({ type: 'PING', clientTime: t }));
+    }
     function connect() {
-      const wsStatus = document.getElementById('wsStatus');
       const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}&token=${encodeURIComponent(hostToken)}`;
-      console.log('[WS] Connecting to', wsUrl);
+      if (ws) { ws.onclose = null; ws.close(); }
       ws = new WebSocket(wsUrl);
-      ws.addEventListener('open', () => {
-        console.log('[WS] Connected');
-        wsStatus.textContent = 'CONNECTED';
-        wsStatus.style.color = 'var(--ok)';
-        document.querySelectorAll('.control-btn').forEach(b => b.disabled = false);
-        ws.send(JSON.stringify({ type: 'PING' }));
-        // Heartbeat
-        setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'PING' })); }, 30000);
-      });
-      ws.addEventListener('close', () => { 
-        console.warn('[WS] Disconnected');
-        wsStatus.textContent = 'DISCONNECTED';
-        wsStatus.style.color = 'var(--bad)';
-        document.querySelectorAll('.control-btn').forEach(b => b.disabled = true);
-        setTimeout(connect, 2000); 
-      });
-      ws.addEventListener('error', (e) => console.error('[WS] Error:', e));
+      ws.addEventListener('open', () => sendPing());
+      ws.addEventListener('close', () => setTimeout(connect, 2000));
       ws.addEventListener('message', onMessage);
     }
     connect();
 
+    setInterval(() => { sendPing(); }, 10000);
+
     function onMessage(event) {
       const msg = JSON.parse(event.data);
-
-      if (msg.type === 'PONG') { /* connection alive */ }
-
-      if (msg.type === 'PLAYER_JOINED') {
-        const existing = players.get(msg.playerId);
-        players.set(msg.playerId, { 
-          id: msg.playerId, 
-          displayName: msg.displayName, 
-          score: msg.score ?? (existing?.score ?? 0), 
-          teamId: msg.teamId ?? (existing?.teamId ?? null) 
-        });
-        if (msg.teamId != null && teams.has(msg.teamId)) {
-          const t = teams.get(msg.teamId);
-          if (!t.playerIds.includes(msg.playerId)) t.playerIds.push(msg.playerId);
-        }
-        renderPlayers();
-      }
-      if (msg.type === 'PLAYER_KICKED') { players.delete(msg.playerId); renderPlayers(); }
-
-      if (msg.type === 'SCORE_UPDATE' || msg.type === 'BOARD_STATE') {
-        if (msg.scores) {
-          msg.scores.forEach((s) => {
-            if (!players.has(s.playerId)) {
-              players.set(s.playerId, { id: s.playerId, displayName: s.displayName || 'Player', score: s.score, teamId: s.teamId ?? null });
-            } else {
-              players.get(s.playerId).score = s.score;
-            }
-          });
-        }
-        if (msg.usedQuestions) {
-          usedSet = new Set(msg.usedQuestions);
-        }
-        if (msg.currentRound != null) currentRound = msg.currentRound;
-        if (msg.status === 'active' || msg.status === 'final_jeopardy' || msg.status === 'finished') {
-          document.getElementById('startGame').style.display = 'none';
-        } else {
-          document.getElementById('startGame').style.display = '';
-        }
-        renderPlayers();
-        renderBoard();
-        updateRoundLabel();
-      }
-
-      if (msg.type === 'ROUND_ADVANCE') {
-        currentRound = msg.roundIndex;
-        usedSet = new Set(); // new round, fresh board
-        renderBoard();
-        updateRoundLabel();
-      }
-
-      if (msg.type === 'QUESTION_OPEN') {
-        document.getElementById('questionText').textContent = msg.questionText;
-        const at = document.getElementById('answerText');
-        at.classList.add('answer-hidden');
-        at.textContent = ''; // will be filled from openQuestion
-        openQuestion = msg;
-        // Find the answer from local data
-        for (const r of rounds) {
-          for (const c of r.categories) {
-            const q = c.questions.find((q) => q.id === msg.questionId);
-            if (q) { at.textContent = '✓ ' + q.answer; break; }
-          }
-        }
-        renderJudgeButtons();
-      }
-
-      if (msg.type === 'QUESTION_CLOSED') {
+      if (msg.type === 'PONG') return;
+      if (msg.type === 'SYNC_STATE' || msg.type === 'BOARD_STATE') {
+        applySyncState(msg);
+      } else if (msg.type === 'BUZZ_WINNER') {
+        document.getElementById('skipClueWrap').classList.add('hidden');
+        renderJudging(msg);
+      } else if (msg.type === 'QUESTION_CLOSED') {
         openQuestion = null;
-        document.getElementById('questionText').textContent = 'No question open.';
-        document.getElementById('answerText').classList.add('answer-hidden');
-        document.getElementById('judgeButtons').innerHTML = '';
-      }
-
-      if (msg.type === 'BUZZ_WINNER') {
-        const p = players.get(msg.playerId);
-        document.getElementById('questionText').innerHTML = `<span style="color:var(--accent); font-weight:bold;">🎤 ${p?.displayName ?? 'Player'} buzzed in!</span><br/>` + (openQuestion?.questionText || '');
-        renderJudgeButtons(msg.playerId);
-      }
-
-      if (msg.type === 'FINAL_JEOPARDY_REVEAL' && Array.isArray(msg.results)) {
-        finalResults = msg.results;
-        document.getElementById('finalPanel').style.display = '';
-        renderFinalList();
-      }
-    }
-
-    /* ── Render board ───────────────────────────────────────────────────── */
-    function renderBoard() {
-      const boardEl = document.getElementById('board');
-      boardEl.innerHTML = '';
-      const cats = rounds[currentRound]?.categories ?? [];
-      if (!cats.length) { boardEl.textContent = 'No categories in this round.'; return; }
-      boardEl.style.gridTemplateColumns = `repeat(${cats.length}, 1fr)`;
-      for (const cat of cats) {
-        const h = document.createElement('div');
-        h.className = 'cat-header';
-        h.textContent = cat.title;
-        boardEl.appendChild(h);
-      }
-      const maxQ = Math.max(...cats.map((c) => c.questions.length), 0);
-      for (let qi = 0; qi < maxQ; qi++) {
-        for (const cat of cats) {
-          const q = (cat.questions || []).sort((a, b) => a.value - b.value)[qi];
-          if (!q) { boardEl.appendChild(document.createElement('div')); continue; }
-          const btn = document.createElement('button');
-          btn.className = 'question-cell' + (usedSet.has(q.id) ? ' used secondary' : '');
-          btn.textContent = '$' + q.value + (q.isDailyDouble || q.is_daily_double ? ' ★' : '');
-          btn.disabled = usedSet.has(q.id);
-          btn.addEventListener('click', () => {
-            ws.send(JSON.stringify({ type: 'OPEN_QUESTION', questionId: q.id }));
-          });
-          boardEl.appendChild(btn);
-        }
+        buzzWinnerId = null;
+        document.getElementById('skipClueWrap').classList.add('hidden');
+        updateClueCard();
+        document.getElementById('judgePanel').classList.add('hidden');
+        document.getElementById('judgePanel').classList.remove('judge-active');
+        renderPlayerList();
+      } else if (msg.type === 'QUESTION_OPEN') {
+        buzzWinnerId = null;
+        openQuestion = msg;
+        document.getElementById('judgePanel').classList.add('hidden');
+        document.getElementById('judgePanel').classList.remove('judge-active');
+        document.getElementById('skipClueWrap').classList.toggle('hidden', !!msg.isDailyDouble);
+        updateClueCard();
+        renderPlayerList();
       }
     }
 
-    /* ── Render players / teams ─────────────────────────────────────────── */
-    function renderPlayers() {
-      const list = document.getElementById('playerList');
-      const sel  = document.getElementById('scorePlayer');
-      document.getElementById('playerCount').textContent = `(${players.size})`;
-      list.innerHTML = '';
-      sel.innerHTML = '';
-      const sorted = [...players.values()].sort((a, b) => b.score - a.score);
-      for (const p of sorted) {
-        const li = document.createElement('li');
-        li.innerHTML = `<span>${p.displayName}</span><strong>$${p.score}</strong>`;
-        const kick = document.createElement('button');
-        kick.textContent = 'Kick';
-        kick.className = 'secondary';
-        kick.style.fontSize = '.8rem';
-        kick.style.padding = '.2rem .6rem';
-        kick.addEventListener('click', () => ws.send(JSON.stringify({ type: 'KICK_PLAYER', playerId: p.id })));
-        li.appendChild(kick);
-        list.appendChild(li);
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        opt.textContent = p.displayName;
-        sel.appendChild(opt);
-      }
+    function applySyncState(state) {
+      if (state.serverTime && state.serverTime < lastStateTime) return;
+      lastStateTime = state.serverTime || Date.now();
 
-      if (teamMode && teams.size > 0) {
-        document.getElementById('teamPanel').style.display = '';
-        renderTeams();
-      }
+      if (state.scores) state.scores.forEach(s => players.set(s.playerId, s));
+      if (state.usedQuestions) usedSet = new Set(state.usedQuestions);
+      if (state.currentRound != null) currentRound = state.currentRound;
+
+      // Update basic info
+      const totalQ = rounds[currentRound]?.categories.reduce((s, c) => s + c.questions.length, 0) || 0;
+      document.getElementById('roundInfo').textContent = `ROUND ${currentRound + 1} · ${usedSet.size}/${totalQ}`;
+      document.getElementById('lobbyCTA').classList.toggle('hidden', state.status !== 'lobby');
+      
+      renderPlayerList();
+      renderBoard();
+      updateClueCard();
     }
 
-    function renderTeams() {
-      const el = document.getElementById('teamList');
-      el.innerHTML = '';
-      for (const [, t] of teams) {
-        const members = t.playerIds.map((id) => players.get(id)?.displayName ?? '?').join(', ');
-        const teamScore = t.playerIds.reduce((sum, id) => sum + (players.get(id)?.score ?? 0), 0);
-        const div = document.createElement('div');
-        div.className = 'card';
-        div.style.padding = '.6rem';
-        div.innerHTML = `<strong>${t.name}</strong> <span style="color:var(--accent);font-family:Fredoka,sans-serif;">$${teamScore}</span><div class="small">${members || 'No players'}</div>`;
-        el.appendChild(div);
+    function updateClueCard() {
+      const card = document.getElementById('clueCard');
+      const cat = document.getElementById('clueCatDisplay');
+      const val = document.getElementById('clueValueDisplay');
+      const text = document.getElementById('clueTextDisplay');
+      const ansSec = document.getElementById('answerSection');
+      const ansTxt = document.getElementById('answerTextDisplay');
+
+      if (!openQuestion) {
+        cat.textContent = 'Lobby';
+        val.textContent = '$0';
+        text.textContent = 'Waiting for players to join...';
+        ansSec.classList.add('hidden');
+        document.getElementById('skipClueWrap').classList.add('hidden');
+        return;
       }
+
+      cat.textContent = openQuestion.categoryTitle;
+      val.textContent = `$${openQuestion.value}`;
+      text.textContent = openQuestion.questionText;
+      
+      // Find answer
+      let ans = answerTextForOpenQuestion() || '...';
+      ansTxt.textContent = `WHAT IS ${ans.toUpperCase()}?`;
+      ansSec.classList.remove('hidden');
     }
 
-    /* ── Judge buttons ──────────────────────────────────────────────────── */
-    function renderJudgeButtons(activeId = null) {
-      const el = document.getElementById('judgeButtons');
-      el.innerHTML = '';
-      const sorted = [...players.values()].sort((a, b) => b.score - a.score);
-      for (const p of sorted) {
-        const isActive = p.id === activeId;
+    function renderJudging(buzz) {
+      buzzWinnerId = buzz.playerId;
+      const p = document.getElementById('judgePanel');
+      p.classList.remove('hidden');
+      p.classList.add('judge-active');
+      document.getElementById('judgeNameDisplay').textContent = buzz.displayName;
+      document.getElementById('buzzTimeDisplay').textContent =
+        buzz.time != null && Number.isFinite(Number(buzz.time)) ? `${Number(buzz.time)}s` : '—';
+      document.getElementById('judgeRewardNote').textContent = `+ $${openQuestion?.value || 0} → ${buzz.displayName}`;
+
+      const avatar = document.getElementById('judgeAvatar');
+      avatar.style.background = getAvatarColor(buzz.playerId);
+      avatar.textContent = getAvatarGlyph(buzz.playerId);
+
+      // Re-bind buttons
+      const btnC = document.getElementById('btnJudgeCorrect');
+      const btnW = document.getElementById('btnJudgeWrong');
+      btnC.onclick = () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: buzz.playerId, correct: true }));
+      btnW.onclick = () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: buzz.playerId, correct: false }));
+      renderPlayerList();
+    }
+
+    function renderPlayerList() {
+      const container = document.getElementById('playersContainer');
+      container.innerHTML = '';
+      const sorted = [...players.values()].sort((a,b) => b.score - a.score);
+      document.getElementById('listTitleDisplay').textContent = `PLAYERS · ${players.size}`;
+
+      sorted.forEach((p, i) => {
+        const accent = getAvatarColor(p.playerId);
+        const isBuzzed = buzzWinnerId === p.playerId;
         const row = document.createElement('div');
-        row.style.display = 'flex';
-        row.style.gap = '.4rem';
-        row.style.alignItems = 'center';
-        row.style.padding = '4px';
-        row.style.borderRadius = '8px';
-        if (isActive) row.style.background = 'rgba(255, 200, 61, 0.1)';
-        
-        row.innerHTML = `<span style="min-width:100px;font-size:.95rem;${isActive ? 'color:var(--accent);font-weight:bold;' : ''}">${p.displayName}</span>`;
-        const ok = document.createElement('button');
-        ok.textContent = '✓ Correct';
-        ok.style.fontSize = '.85rem';
-        if (isActive) ok.className = 'accent';
-        ok.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: p.id, correct: true })));
-        
-        const bad = document.createElement('button');
-        bad.textContent = '✗ Wrong';
-        bad.className = 'secondary';
-        bad.style.fontSize = '.85rem';
-        bad.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: p.id, correct: false })));
-        row.append(ok, bad);
-        el.appendChild(row);
+        row.className = `player-row${isBuzzed ? ' row-highlight' : ''}`;
+        if (isBuzzed) row.style.border = `1px solid ${accent}`;
+        else row.style.border = '';
+        const scoreClass = p.score < 0 ? 'score-display negative' : 'score-display';
+        row.innerHTML = `
+          <div class="player-rank">${i + 1}</div>
+          <div class="avatar-small" style="background: ${accent}">${getAvatarGlyph(p.playerId)}</div>
+          <div class="player-name-row">${(p.displayName || 'PLAYER').toUpperCase()}</div>
+          <div class="player-score-group">
+            <button type="button" class="mini-stepper minus" data-id="${p.playerId}">−</button>
+            <div class="${scoreClass}">${formatDollars(p.score)}</div>
+            <button type="button" class="mini-stepper plus" data-id="${p.playerId}">+</button>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+
+      container.querySelectorAll('.mini-stepper').forEach(btn => {
+        btn.onclick = () => {
+          const id = btn.dataset.id;
+          const p = players.get(id);
+          const val = btn.classList.contains('plus') ? 200 : -200;
+          ws.send(JSON.stringify({ type: 'ADJUST_SCORE', playerId: id, score: p.score + val }));
+        };
+      });
+    }
+
+    function renderBoard() {
+      const grid = document.getElementById('boardGrid');
+      grid.innerHTML = '';
+      const cats = rounds[currentRound]?.categories || [];
+      grid.style.gridTemplateColumns = `repeat(${cats.length}, 1fr)`;
+
+      cats.forEach(c => {
+        const h = document.createElement('div');
+        h.className = 'badge';
+        h.style.background = 'var(--bg3)';
+        h.style.textAlign = 'center';
+        h.style.fontSize = '8px';
+        h.style.height = '40px';
+        h.style.display = 'flex';
+        h.style.alignItems = 'center';
+        h.style.justifyContent = 'center';
+        h.textContent = c.title;
+        grid.appendChild(h);
+      });
+
+      const maxQ = Math.max(...cats.map(c => c.questions.length), 0);
+      for(let i=0; i<maxQ; i++) {
+        cats.forEach(c => {
+          const q = c.questions.sort((a,b) => a.value - b.value)[i];
+          const cell = document.createElement('div');
+          cell.style.borderRadius = '8px';
+          cell.style.background = 'var(--bg4)';
+          cell.style.display = 'flex';
+          cell.style.alignItems = 'center';
+          cell.style.justifyContent = 'center';
+          cell.style.fontFamily = 'Anton';
+          cell.style.fontSize = '14px';
+          cell.style.color = 'var(--gold)';
+          cell.style.border = '1px solid var(--line)';
+          if (!q || usedSet.has(q.id)) {
+            cell.style.opacity = '0.1';
+            cell.textContent = q ? `$${q.value}` : '';
+          } else {
+            cell.textContent = `$${q.value}`;
+            cell.onclick = () => {
+              ws.send(JSON.stringify({ type: 'OPEN_QUESTION', questionId: q.id }));
+              document.getElementById('boardModal').classList.add('hidden');
+            };
+          }
+          grid.appendChild(cell);
+        });
       }
     }
 
-    /* ── Final Jeopardy list ────────────────────────────────────────────── */
-    function renderFinalList() {
-      const el = document.getElementById('finalList');
-      el.innerHTML = '';
-      for (const r of finalResults) {
-        const item = document.createElement('div');
-        item.className = 'card';
-        item.style.padding = '.75rem';
-        item.innerHTML = `<strong>${r.displayName}</strong><div class="small">Wager: $${r.wager}</div><div style="margin:.3rem 0;">${r.answer || '<em style="opacity:.5">No answer</em>'}</div>`;
-        const ok = document.createElement('button');
-        ok.textContent = '✓ Correct';
-        ok.style.fontSize = '.85rem';
-        ok.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE_FINAL', playerId: r.playerId, correct: true })));
-        const bad = document.createElement('button');
-        bad.textContent = '✗ Wrong';
-        bad.className = 'secondary';
-        bad.style.fontSize = '.85rem';
-        bad.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE_FINAL', playerId: r.playerId, correct: false })));
-        item.append(ok, bad);
-        el.appendChild(item);
-      }
+    function getAvatarColor(id) {
+      const colors = ['#FFC83D', '#FF3D8E', '#5EEBC1', '#7C5CFF', '#FF5A5A', '#5BA9FF'];
+      return colors[id.split('').reduce((a,c) => a+c.charCodeAt(0), 0) % colors.length];
+    }
+    function getAvatarGlyph(id) {
+      const glyphs = ['◆', '✦', '▲', '●', '■', '◑'];
+      return glyphs[id.split('').reduce((a,c) => a+c.charCodeAt(0), 0) % glyphs.length];
     }
 
-    function updateRoundLabel() {
-      const rl = document.getElementById('roundLabel');
-      if (rounds.length > 1) rl.textContent = `Round ${currentRound + 1} of ${rounds.length}`;
-    }
-
-    /* ── Control buttons ────────────────────────────────────────────────── */
-    document.getElementById('startGame').addEventListener('click', () => ws.send(JSON.stringify({ type: 'GAME_START' })));
-    document.getElementById('startFinal').addEventListener('click', () => ws.send(JSON.stringify({ type: 'START_FINAL_JEOPARDY' })));
-    document.getElementById('nextRound').addEventListener('click', () => ws.send(JSON.stringify({ type: 'ADVANCE_ROUND' })));
-    document.getElementById('endGame').addEventListener('click', () => { if (confirm('End the game?')) ws.send(JSON.stringify({ type: 'END_GAME' })); });
-    document.getElementById('toggleAnswer').addEventListener('click', () => {
-      const el = document.getElementById('answerText');
-      el.classList.toggle('answer-hidden');
-    });
-    document.getElementById('applyScore').addEventListener('click', () => {
-      const playerId = document.getElementById('scorePlayer').value;
-      const score = Number(document.getElementById('scoreValue').value);
-      if (!playerId || isNaN(score)) return;
-      ws.send(JSON.stringify({ type: 'ADJUST_SCORE', playerId, score }));
-    });
-
-    renderPlayers();
-    renderBoard();
-    updateRoundLabel();
-    if (rounds.length <= 1) document.getElementById('nextRound').style.display = 'none';
+    // Header controls
+    document.getElementById('showBoardBtn').onclick = () => document.getElementById('boardModal').classList.remove('hidden');
+    document.getElementById('closeBoardModal').onclick = () => document.getElementById('boardModal').classList.add('hidden');
+    document.getElementById('menuBtn').onclick = () => document.getElementById('menuOverlay').classList.remove('hidden');
+    document.getElementById('closeMenuOverlay').onclick = () => document.getElementById('menuOverlay').classList.add('hidden');
+    document.getElementById('startGameBtn').onclick = () => ws.send(JSON.stringify({ type: 'GAME_START' }));
+    document.getElementById('nextRoundBtn').onclick = () => ws.send(JSON.stringify({ type: 'ADVANCE_ROUND' }));
+    document.getElementById('revealBtn').onclick = () => ws.send(JSON.stringify({ type: 'REVEAL_QUESTION' }));
+    document.getElementById('skipClueBtn').onclick = () => ws.send(JSON.stringify({ type: 'SKIP_QUESTION' }));
+    document.getElementById('menuPresenter').onclick = () => window.open(`/game/${gameId}`, '_blank');
+    document.getElementById('menuEnd').onclick = () => { if(confirm('End Game?')) ws.send(JSON.stringify({ type: 'END_GAME' })); };
   </script>
 </body>
 </html>

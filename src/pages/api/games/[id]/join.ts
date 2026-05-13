@@ -18,6 +18,11 @@ export const POST: APIRoute = async ({ request, params, cookies }) => {
   const playerId = randomUUID();
   await db.insert(schema.players).values({ id: playerId, gameId, displayName: name });
 
+  // Update in-memory state if the game is active
+  const { addPlayerToGame } = await import('@/lib/gameState');
+  console.log(`[API/Join] Updating in-memory state for game ${gameId}, player ${name}`);
+  await addPlayerToGame(gameId, { id: playerId, displayName: name });
+
   const token = issuePlayerToken(playerId, gameId);
   cookies.set(PLAYER_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 });
   return new Response(JSON.stringify({ playerId, token }), { status: 201 });

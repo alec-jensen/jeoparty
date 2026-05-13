@@ -214,28 +214,48 @@ const initialPlayerId = payload?.playerId ?? '';
 
     /* ── WebSocket ─────────────────────────────────────────────────────────── */
     let ws;
+    let lastStateTime = 0;
+    let pingSentAt = 0;
+
+    function sendPing() {
+      if (!ws || ws.readyState !== 1) return;
+      pingSentAt = Date.now();
+      ws.send(JSON.stringify({ type: 'PING', clientTime: pingSentAt }));
+    }
+
     function connect() {
       if (!playerToken) return;
       const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}&token=${encodeURIComponent(playerToken)}`;
+      
+      if (ws) { ws.onclose = null; ws.close(); }
       ws = new WebSocket(wsUrl);
-      ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'PING' })));
-      ws.addEventListener('close', () => { setTimeout(connect, 2000); }); // auto-reconnect
+
+      ws.addEventListener('open', () => {
+        console.log('[Player] Connected to WebSocket');
+        sendPing();
+      });
+
+      ws.addEventListener('close', () => { 
+        setTimeout(connect, 2000); 
+      });
 
       ws.addEventListener('message', (event) => {
         const msg = JSON.parse(event.data);
 
-        if (msg.type === 'PONG') { offset = msg.serverTime - Date.now(); }
+        if (msg.type === 'PONG') {
+          if (msg.clientTime != null && typeof msg.clientTime === 'number') {
+            offset = msg.serverTime - (msg.clientTime + Date.now()) / 2;
+          } else {
+            offset = msg.serverTime - Date.now();
+          }
+          return;
+        }
 
-        if (msg.type === 'BOARD_STATE') {
-          gameState.board = msg.board;
-          gameState.usedQuestions = new Set(msg.usedQuestions || []);
-          gameState.scores = msg.scores || [];
-          gameState.teams = msg.teams || [];
-          gameState.currentPicker = msg.currentPicker;
-          gameState.teamMode = msg.teamMode ?? false;
-          isMyTurn = !!(playerId && gameState.currentPicker === playerId);
-          renderScores();
-          renderBoard();
+        console.log('[Player] Message:', msg.type, msg);
+
+        if (msg.type === 'SYNC_STATE' || msg.type === 'BOARD_STATE') {
+          applySyncState(msg);
+          return;
         }
 
         if (msg.type === 'GAME_START') {
@@ -274,17 +294,8 @@ const initialPlayerId = payload?.playerId ?? '';
           canBuzz = true;
           buzzBtn.classList.remove('hidden');
           buzzBtn.classList.add('buzzer-ready');
-          const endsAt = msg.serverTime + msg.windowMs;
-          setState('BUZZ!', 'First clean buzz wins.');
-          countdown.classList.remove('hidden');
-          const tick = () => {
-            const left = Math.max(0, endsAt - (Date.now() + offset));
-            countdown.textContent = (left / 1000).toFixed(1) + 's';
-            countdown.className = 'countdown' + (left < 1500 ? ' urgent' : '');
-            if (left > 0) requestAnimationFrame(tick);
-            else { countdown.classList.add('hidden'); }
-          };
-          tick();
+          countdown.classList.add('hidden');
+          setState('BUZZ!', 'Buzz when you know it. Earliest buzz wins after everyone has a moment to ring in.');
         }
 
         if (msg.type === 'BUZZ_WINNER') {
@@ -367,6 +378,42 @@ const initialPlayerId = payload?.playerId ?? '';
           if (ws) ws.close();
         }
       });
+    }
+
+    // Heartbeat
+    setInterval(() => {
+      if (ws && ws.readyState === 1) sendPing();
+      else if (playerToken && (!ws || ws.readyState === 3)) connect();
+    }, 10000);
+
+    function applySyncState(state) {
+      if (state.serverTime && state.serverTime < lastStateTime) {
+        console.warn('[Player] Ignoring stale state sync');
+        return;
+      }
+      lastStateTime = state.serverTime || Date.now();
+      if (state.serverTime) offset = state.serverTime - Date.now();
+
+      gameState.board = state.board;
+      gameState.usedQuestions = new Set(state.usedQuestions || []);
+      gameState.scores = state.scores || [];
+      gameState.teams = state.teams || [];
+      gameState.currentPicker = state.currentPicker;
+      gameState.teamMode = state.teamMode ?? false;
+      isMyTurn = !!(playerId && gameState.currentPicker === playerId);
+
+      // Status handling
+      if (state.status === 'lobby') {
+        setState('Lobby', 'Waiting for the host to start...');
+      } else if (state.status === 'active') {
+        if (!isMyTurn) setState('Watch the Screen', 'Someone else is picking.');
+        else setState('Your Pick!', 'Choose a category and value.');
+      } else if (state.status === 'final_jeopardy') {
+        setState('Final Jeopardy', 'Pay attention to the screen!');
+      }
+
+      renderScores();
+      renderBoard();
     }
 
     /* ── Join form ─────────────────────────────────────────────────────────── */

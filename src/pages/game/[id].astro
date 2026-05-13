@@ -104,52 +104,54 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     /* ── WebSocket ─────────────────────────────────────────────────────────── */
     const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}`;
     let ws;
+    let lastStateTime = 0;
+
+    function sendPing() {
+      if (!ws || ws.readyState !== 1) return;
+      const t = Date.now();
+      ws.send(JSON.stringify({ type: 'PING', clientTime: t }));
+    }
+
     function connect() {
+      if (ws) { ws.onclose = null; ws.close(); }
       ws = new WebSocket(wsUrl);
       ws.addEventListener('open', () => {
-        ws.send(JSON.stringify({ type: 'PING' }));
-        // Heartbeat
-        setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'PING' })); }, 30000);
+        sendPing();
       });
       ws.addEventListener('close', () => setTimeout(connect, 2000));
       ws.addEventListener('message', onMessage);
     }
     connect();
 
+    // Heartbeat
+    setInterval(() => {
+      if (ws && ws.readyState === 1) sendPing();
+      else if (!ws || ws.readyState === 3) connect();
+    }, 10000);
+
     function onMessage(event) {
       const status = document.getElementById('conn-status');
       const msg = JSON.parse(event.data);
 
-      if (msg.type === 'PONG') { 
-        offset = msg.serverTime - Date.now();
+      if (msg.type === 'PONG') {
+        if (msg.clientTime != null && typeof msg.clientTime === 'number') {
+          offset = msg.serverTime - (msg.clientTime + Date.now()) / 2;
+        } else {
+          offset = msg.serverTime - Date.now();
+        }
         if (status) status.textContent = 'CONNECTED';
         return;
       }
 
-      if (msg.type === 'BOARD_STATE') {
-        gameState.board = msg.board;
-        gameState.usedQuestions = new Set(msg.usedQuestions || []);
-        gameState.scores = msg.scores || [];
-        gameState.teams = msg.teams || [];
-        gameState.currentPicker = msg.currentPicker;
-        gameState.currentRound = msg.currentRound ?? 0;
-        gameState.totalRounds = msg.totalRounds ?? 1;
-        gameState.teamMode = msg.teamMode ?? false;
-        
-        if (msg.status === 'active' || msg.status === 'final_jeopardy' || msg.status === 'finished') {
-          lobbyScreen.classList.add('hidden');
-          gameScreen.classList.remove('hidden');
-        } else {
-          lobbyScreen.classList.remove('hidden');
-          gameScreen.classList.add('hidden');
-        }
+      console.log('[Presenter] Message:', msg.type, msg);
 
-        renderBoard();
-        renderScores();
-        updateRoundBadge();
+      if (msg.type === 'SYNC_STATE' || msg.type === 'BOARD_STATE') {
+        applySyncState(msg);
+        return;
       }
 
       if (msg.type === 'PLAYER_JOINED') {
+        // Player chip added via SYNC_STATE usually, but we can handle it for responsiveness
         const chip = document.createElement('div');
         chip.id = 'pl-' + msg.playerId;
         chip.style.cssText = 'background:rgba(74,48,160,0.5);border:1px solid var(--border);border-radius:12px;padding:.4rem 1rem;font-family:Fredoka,sans-serif;font-size:1.1rem;';
@@ -221,6 +223,46 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
           questionOverlay.classList.remove('hidden');
         }
       }
+    }
+
+    function applySyncState(state) {
+      if (state.serverTime && state.serverTime < lastStateTime) {
+        console.warn('[Presenter] Ignoring stale state sync');
+        return;
+      }
+      lastStateTime = state.serverTime || Date.now();
+      if (state.serverTime) offset = state.serverTime - Date.now();
+
+      gameState.board = state.board;
+      gameState.usedQuestions = new Set(state.usedQuestions || []);
+      gameState.scores = state.scores || [];
+      gameState.teams = state.teams || [];
+      gameState.currentPicker = state.currentPicker;
+      gameState.currentRound = state.currentRound ?? 0;
+      gameState.totalRounds = state.totalRounds ?? 1;
+      gameState.teamMode = state.teamMode ?? false;
+      
+      if (state.status === 'active' || state.status === 'final_jeopardy' || state.status === 'finished') {
+        lobbyScreen.classList.add('hidden');
+        gameScreen.classList.remove('hidden');
+      } else {
+        lobbyScreen.classList.remove('hidden');
+        gameScreen.classList.add('hidden');
+      }
+
+      // Render players in lobby
+      playerList.innerHTML = '';
+      gameState.scores.forEach(p => {
+        const chip = document.createElement('div');
+        chip.id = 'pl-' + p.playerId;
+        chip.style.cssText = 'background:rgba(74,48,160,0.5);border:1px solid var(--border);border-radius:12px;padding:.4rem 1rem;font-family:Fredoka,sans-serif;font-size:1.1rem;';
+        chip.textContent = p.displayName;
+        playerList.appendChild(chip);
+      });
+
+      renderBoard();
+      renderScores();
+      updateRoundBadge();
     }
 
     /* ── Render board ──────────────────────────────────────────────────────── */

@@ -11,8 +11,9 @@ export default defineConfig({
         'astro:server:setup': async ({ server }) => {
           const httpServer = server.httpServer;
           if (httpServer) {
-            const { initWebSockets } = await import('./src/lib/ws');
-            initWebSockets(httpServer as any);
+            const mod = await server.ssrLoadModule('./src/lib/ws');
+            mod.initWebSockets(httpServer as any);
+            console.log('🚀 WebSocket server integrated with Astro dev server');
           }
         }
       }
