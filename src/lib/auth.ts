@@ -3,11 +3,11 @@ import jwt from 'jsonwebtoken';
 import { createHash } from 'node:crypto';
 import { query } from '@/lib/db';
 
-function jwtSecret() {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) throw new Error('JWT_SECRET is required');
-  return secret;
-}
+const jwtSecret: string = (() => {
+  const value = process.env.JWT_SECRET;
+  if (!value) throw new Error('JWT_SECRET is required');
+  return value;
+})();
 
 export const HOST_COOKIE = 'jeoparty_host_token';
 export const PLAYER_COOKIE = 'jeoparty_player_token';
@@ -38,13 +38,13 @@ export async function verifyPassword(password: string, hash: string) {
 export async function issueHostToken(hostId: number, email: string) {
   const result = await query<any>('INSERT INTO auth_tokens (host_id, token_hash) VALUES (?, ?)', [hostId, '']);
   const tokenId = result.insertId as number;
-  const token = jwt.sign({ hostId, email, tokenId }, jwtSecret(), { expiresIn: '7d' });
+  const token = jwt.sign({ hostId, email, tokenId }, jwtSecret, { expiresIn: '7d' });
   await query('UPDATE auth_tokens SET token_hash = ? WHERE id = ?', [hashToken(token), tokenId]);
   return token;
 }
 
 export function verifyJwt<T>(token: string) {
-  return jwt.verify(token, jwtSecret()) as T;
+  return jwt.verify(token, jwtSecret) as T;
 }
 
 export async function verifyHostToken(token: string): Promise<HostJwtPayload | null> {
@@ -62,7 +62,7 @@ export async function verifyHostToken(token: string): Promise<HostJwtPayload | n
 }
 
 export function issuePlayerToken(playerId: string, gameId: string) {
-  return jwt.sign({ playerId, gameId }, jwtSecret(), { expiresIn: '7d' });
+  return jwt.sign({ playerId, gameId }, jwtSecret, { expiresIn: '7d' });
 }
 
 export function verifyPlayerToken(token: string): PlayerJwtPayload | null {

@@ -45,6 +45,12 @@ function broadcast(game: ActiveGame, type: string, payload: Record<string, unkno
   }
 }
 
+function sendToHost(game: ActiveGame, type: string, payload: Record<string, unknown> = {}) {
+  if (!game.hostSocketId) return;
+  const host = sockets.get(game.hostSocketId);
+  if (host) send(host.ws, type, payload);
+}
+
 function findQuestion(game: ActiveGame, questionId: number) {
   for (const cat of game.board.categories) {
     const q = cat.questions.find((it) => it.id === questionId);
@@ -150,7 +156,14 @@ async function maybeStartFinalPrompt(game: ActiveGame) {
   broadcast(game, 'FINAL_JEOPARDY_START', { questionText: game.finalJeopardy.finalQuestion });
   const timer = setTimeout(() => {
     if (!game.finalJeopardy) return;
-    broadcast(game, 'FINAL_JEOPARDY_END', { results: [] });
+    const results = Array.from(game.players.entries()).map(([id, pl]) => ({
+      playerId: id,
+      displayName: pl.displayName,
+      wager: game.finalJeopardy?.wagers.get(id) ?? 0,
+      answer: game.finalJeopardy?.answers.get(id) ?? '',
+      newScore: pl.score
+    }));
+    sendToHost(game, 'FINAL_JEOPARDY_REVEAL', { results });
   }, 30000);
   trackTimer(game.gameId, timer);
 }
@@ -375,7 +388,14 @@ export function initWebSockets(server: import('node:http').Server) {
           current.finalJeopardy.answers.set(meta.playerId, String(data.answer ?? ''));
           const allAnswered = Array.from(current.players.keys()).every((id) => current.finalJeopardy?.answers.has(id));
           if (allAnswered) {
-            broadcast(current, 'FINAL_JEOPARDY_END', { results: [] });
+            const results = Array.from(current.players.entries()).map(([id, pl]) => ({
+              playerId: id,
+              displayName: pl.displayName,
+              wager: current.finalJeopardy?.wagers.get(id) ?? 0,
+              answer: current.finalJeopardy?.answers.get(id) ?? '',
+              newScore: pl.score
+            }));
+            sendToHost(current, 'FINAL_JEOPARDY_REVEAL', { results });
           }
         }
       }

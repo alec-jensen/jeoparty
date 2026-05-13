@@ -3,7 +3,12 @@ import QRCode from 'qrcode';
 
 const gameId = document.body.dataset.gameId as string;
 const hostToken = document.body.dataset.hostToken as string;
-const seed = JSON.parse((document.getElementById('host-seed') as HTMLScriptElement).textContent || '{}');
+let seed: any = {};
+try {
+  seed = JSON.parse((document.getElementById('host-seed') as HTMLScriptElement).textContent || '{}');
+} catch {
+  seed = { board: { categories: [] }, usedQuestionIds: [], initialPlayers: [] };
+}
 const board = seed.board;
 const usedSet = new Set(seed.usedQuestionIds);
 const players = new Map(seed.initialPlayers);
@@ -121,7 +126,7 @@ ws.addEventListener('message', (event) => {
     (document.getElementById('questionText')!).textContent = msg.questionText;
     if (openQuestion) (document.getElementById('answerText')!).textContent = openQuestion.answer;
   }
-  if (msg.type === 'FINAL_JEOPARDY_END' && Array.isArray(msg.results)) {
+  if (msg.type === 'FINAL_JEOPARDY_REVEAL' && Array.isArray(msg.results)) {
     finalResults = msg.results;
     renderFinalList();
   }

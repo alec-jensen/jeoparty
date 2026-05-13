@@ -1,6 +1,11 @@
 import mysql from 'mysql2/promise';
 
-const databaseUrl = process.env.DATABASE_URL ?? 'mysql://root:root@127.0.0.1:3306/jeoparty';
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL is required');
+}
+
 export const pool = mysql.createPool(databaseUrl);
 
 let schemaReady: Promise<void> | null = null;

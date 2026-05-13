@@ -68,7 +68,6 @@ const boardTitle = boards[0].title;
       window.addEventListener('beforeunload', (e) => {
         if (!dirty) return;
         e.preventDefault();
-        e.returnValue = '';
       });
 
       function addQuestion(container, data = {}) {
