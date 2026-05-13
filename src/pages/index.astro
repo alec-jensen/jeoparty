@@ -1,19 +1,69 @@
 ---
 import '@/styles/global.css';
 import { db, schema } from '@/lib/db';
-import { eq } from 'drizzle-orm';
+import { eq, inArray, count } from 'drizzle-orm';
+import pkg from '../../package.json';
 
 const nextParam = Astro.url.searchParams.get('next') ?? '';
 const safeNext = /^\/[a-zA-Z0-9/_-]/.test(nextParam) ? nextParam : '';
 const host = Astro.locals.host;
 const disableReg = process.env.DISABLE_REGISTRATION === 'true';
+const version = pkg.version;
 
-let boards: { id: number; title: string; updatedAt: Date | null }[] = [];
+type BoardRow = { id: number; title: string; updatedAt: Date | null; rounds: number; clues: number };
+let boards: BoardRow[] = [];
 if (host) {
-  boards = await db
+  const raw = await db
     .select({ id: schema.boards.id, title: schema.boards.title, updatedAt: schema.boards.updatedAt })
     .from(schema.boards)
     .where(eq(schema.boards.hostId, host.hostId));
+
+  if (raw.length) {
+    const boardIds = raw.map(b => b.id);
+
+    const roundCounts = await db
+      .select({ boardId: schema.rounds.boardId, cnt: count() })
+      .from(schema.rounds)
+      .where(inArray(schema.rounds.boardId, boardIds))
+      .groupBy(schema.rounds.boardId);
+
+    const roundRows = await db
+      .select({ id: schema.rounds.id, boardId: schema.rounds.boardId })
+      .from(schema.rounds)
+      .where(inArray(schema.rounds.boardId, boardIds));
+    const roundIds = roundRows.map(r => r.id);
+
+    const questionCounts = roundIds.length ? await db
+      .select({ categoryId: schema.questions.categoryId, cnt: count() })
+      .from(schema.questions)
+      .where(inArray(schema.questions.categoryId,
+        (await db.select({ id: schema.categories.id })
+          .from(schema.categories)
+          .where(inArray(schema.categories.roundId, roundIds))).map(c => c.id)
+      ))
+      .groupBy(schema.questions.categoryId) : [];
+
+    const catRows = roundIds.length ? await db
+      .select({ id: schema.categories.id, roundId: schema.categories.roundId })
+      .from(schema.categories)
+      .where(inArray(schema.categories.roundId, roundIds)) : [];
+
+    const cluesByBoard = new Map<number, number>();
+    for (const cat of catRows) {
+      const round = roundRows.find(r => r.id === cat.roundId);
+      if (!round) continue;
+      const qc = questionCounts.find(q => q.categoryId === cat.id);
+      cluesByBoard.set(round.boardId, (cluesByBoard.get(round.boardId) ?? 0) + (qc?.cnt ?? 0));
+    }
+
+    const roundsByBoard = new Map(roundCounts.map(r => [r.boardId, r.cnt]));
+
+    boards = raw.map(b => ({
+      ...b,
+      rounds: roundsByBoard.get(b.id) ?? 0,
+      clues: cluesByBoard.get(b.id) ?? 0,
+    }));
+  }
 }
 
 function timeAgo(d: Date | null) {
@@ -83,7 +133,7 @@ const ACCENT_COLORS = ['var(--gold)', 'var(--magenta)', 'var(--mint)', 'var(--vi
     }
     .hp-pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); flex-shrink: 0; }
     .hp-h1 {
-      font-family: 'Anton', sans-serif; font-size: clamp(56px, 8vw, 100px);
+      font-family: 'Anton', sans-serif; font-size: clamp(56px, 8.6vw, 160px);
       line-height: 0.92; letter-spacing: 0.01em; margin: 0 0 22px;
       color: var(--ink);
     }
@@ -304,7 +354,7 @@ const ACCENT_COLORS = ['var(--gold)', 'var(--magenta)', 'var(--mint)', 'var(--vi
   <nav class="hp-nav">
     <div class="hp-nav-logo">
       <span class="hp-brand">JEOPARTY</span>
-      <span class="hp-version">v0.4.2</span>
+      <span class="hp-version">v{version}</span>
     </div>
     <div class="hp-nav-links">
       <a href={host ? '/dashboard' : '#'}>Boards</a>
@@ -409,7 +459,7 @@ const ACCENT_COLORS = ['var(--gold)', 'var(--magenta)', 'var(--mint)', 'var(--vi
               ))}
             </div>
             <div class="hp-board-name">{b.title.toUpperCase()}</div>
-            <div class="hp-board-stats">1 round · 30 clues</div>
+            <div class="hp-board-stats">{b.rounds} round{b.rounds !== 1 ? 's' : ''} · {b.clues} clue{b.clues !== 1 ? 's' : ''}</div>
             <div class="hp-board-footer">
               <span>{timeAgo(b.updatedAt)}</span>
               <span class="hp-play-link" style={`color:${accent}`}>PLAY →</span>

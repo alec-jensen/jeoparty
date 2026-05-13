@@ -1,13 +1,134 @@
 ---
 import '@/styles/global.css';
 import { db, schema } from '@/lib/db';
-import { eq, desc } from 'drizzle-orm';
+import { eq, inArray, desc, count, max, and } from 'drizzle-orm';
 
 if (!Astro.locals.host) return Astro.redirect('/');
-const boards = await db.select({ id: schema.boards.id, title: schema.boards.title, updatedAt: schema.boards.updatedAt })
+const host = Astro.locals.host;
+
+const ACCENT_COLORS = ['#FFC83D', '#FF3D8E', '#5EEBC1', '#7C5CFF', '#5BA9FF', '#FF8A3D'];
+
+const rawBoards = await db
+  .select({ id: schema.boards.id, title: schema.boards.title, updatedAt: schema.boards.updatedAt })
   .from(schema.boards)
-  .where(eq(schema.boards.hostId, Astro.locals.host.hostId))
+  .where(eq(schema.boards.hostId, host.hostId))
   .orderBy(desc(schema.boards.updatedAt));
+
+const boardIds = rawBoards.map(b => b.id);
+
+const roundRows = boardIds.length ? await db
+  .select({ id: schema.rounds.id, boardId: schema.rounds.boardId, title: schema.rounds.title, position: schema.rounds.position })
+  .from(schema.rounds)
+  .where(inArray(schema.rounds.boardId, boardIds))
+  .orderBy(schema.rounds.position) : [];
+
+const roundIds = roundRows.map(r => r.id);
+
+const catRows = roundIds.length ? await db
+  .select({ id: schema.categories.id, roundId: schema.categories.roundId, title: schema.categories.title, position: schema.categories.position })
+  .from(schema.categories)
+  .where(inArray(schema.categories.roundId, roundIds))
+  .orderBy(schema.categories.position) : [];
+
+const catIds = catRows.map(c => c.id);
+const qCounts = catIds.length ? await db
+  .select({ categoryId: schema.questions.categoryId, cnt: count() })
+  .from(schema.questions)
+  .where(inArray(schema.questions.categoryId, catIds))
+  .groupBy(schema.questions.categoryId) : [];
+
+const gameStatRows = boardIds.length ? await db
+  .select({ boardId: schema.games.boardId, plays: count(), lastPlayed: max(schema.games.createdAt) })
+  .from(schema.games)
+  .where(and(inArray(schema.games.boardId, boardIds), eq(schema.games.hostId, host.hostId)))
+  .groupBy(schema.games.boardId) : [];
+
+const recentGameRows = await db
+  .select({ id: schema.games.id, boardId: schema.games.boardId, status: schema.games.status })
+  .from(schema.games)
+  .where(eq(schema.games.hostId, host.hostId))
+  .orderBy(desc(schema.games.createdAt))
+  .limit(3);
+
+// Compute derived data
+const cluesByBoard = new Map<number, number>();
+for (const cat of catRows) {
+  const round = roundRows.find(r => r.id === cat.roundId);
+  if (!round) continue;
+  const qc = qCounts.find(q => q.categoryId === cat.id);
+  cluesByBoard.set(round.boardId, (cluesByBoard.get(round.boardId) ?? 0) + Number(qc?.cnt ?? 0));
+}
+
+const roundsByBoard = new Map<number, string[]>();
+for (const r of [...roundRows].sort((a, b) => a.position - b.position)) {
+  const existing = roundsByBoard.get(r.boardId) ?? [];
+  existing.push(r.title);
+  roundsByBoard.set(r.boardId, existing);
+}
+
+// First round's categories per board (for mini board preview)
+const firstRoundByBoard = new Map<number, number>();
+for (const r of roundRows) { // already ordered by position
+  if (!firstRoundByBoard.has(r.boardId)) firstRoundByBoard.set(r.boardId, r.id);
+}
+const firstCatsByBoard = new Map<number, string[]>();
+for (const c of catRows) {
+  const r = roundRows.find(rr => rr.id === c.roundId);
+  if (!r || firstRoundByBoard.get(r.boardId) !== c.roundId) continue;
+  const list = firstCatsByBoard.get(r.boardId) ?? [];
+  list.push(c.title);
+  firstCatsByBoard.set(r.boardId, list);
+}
+
+const gameStatsByBoard = new Map(gameStatRows.map(g => [g.boardId, g]));
+const boardTitleMap = new Map(rawBoards.map(b => [b.id, b.title]));
+
+function timeAgo(d: Date | string | null): string {
+  if (!d) return 'never';
+  const diff = (Date.now() - new Date(d).getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+  if (diff < 86400) return `${Math.floor(diff / 86400) === 1 ? '1 day' : Math.floor(diff / 86400) + ' days'} ago`;
+  if (diff < 2592000) return `${Math.floor(diff / 604800) === 1 ? '1 week' : Math.floor(diff / 604800) + ' weeks'} ago`;
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+const boards = rawBoards.map((b, i) => {
+  const roundTitles = roundsByBoard.get(b.id) ?? [];
+  const clues = cluesByBoard.get(b.id) ?? 0;
+  const stats = gameStatsByBoard.get(b.id);
+  const plays = Number(stats?.plays ?? 0);
+  return {
+    id: b.id,
+    title: b.title,
+    roundCount: roundTitles.length,
+    clues,
+    roundTitles,
+    plays,
+    lastPlayed: timeAgo(stats?.lastPlayed ?? null),
+    status: clues > 0 ? 'ready' : 'draft',
+    accent: ACCENT_COLORS[i % ACCENT_COLORS.length],
+    firstRoundCategories: firstCatsByBoard.get(b.id) ?? [],
+  };
+});
+
+const recentRooms = recentGameRows.map(g => ({
+  code: g.id,
+  subtitle: boardTitleMap.get(g.boardId) ?? 'Unknown',
+  live: g.status === 'lobby' || g.status === 'active',
+}));
+
+const totalClues = boards.reduce((s, b) => s + b.clues, 0);
+const allCount = boards.length;
+const draftCount = boards.filter(b => b.status === 'draft').length;
+const readyCount = boards.filter(b => b.status === 'ready').length;
+const playedCount = boards.filter(b => b.plays > 0).length;
+const avatarInitials = (host.email || 'HO').slice(0, 2).toUpperCase();
+const globalLastPlayed = gameStatRows.reduce((best: string | null, g) => {
+  if (!g.lastPlayed) return best;
+  if (!best || new Date(g.lastPlayed) > new Date(best)) return String(g.lastPlayed);
+  return best;
+}, null);
 ---
 <html lang="en">
 <head>
@@ -16,238 +137,764 @@ const boards = await db.select({ id: schema.boards.id, title: schema.boards.titl
   <title>Dashboard — Jeoparty</title>
   <style is:global>
     html, body { height: 100%; overflow: hidden; margin: 0; }
-    body { display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font-family: 'Space Grotesk', sans-serif; }
 
-    /* ── Header (Cohesive with Editor) ─────────────────────────── */
-    #hdr {
-      display: flex; align-items: center; height: 56px;
-      padding: 0 20px; gap: 16px; flex-shrink: 0;
-      background: var(--bg2); border-bottom: 1px solid var(--line);
-    }
-    #hdr-left  { display: flex; align-items: center; gap: 12px; }
-    #hdr-mid   { display: flex; align-items: center; gap: 10px; flex: 1; justify-content: center; }
-    #hdr-right { display: flex; align-items: center; gap: 8px; }
-
-    .brand { font-family: 'Anton', sans-serif; font-size: 22px; color: var(--gold); letter-spacing: .04em; line-height: 1; text-decoration: none; }
-    .editor-badge { font-size: 10px; color: var(--dim); letter-spacing: .22em; padding: 3px 7px; background: var(--bg3); border-radius: 4px; }
-
-    .back-btn {
-      display: flex; align-items: center; gap: 5px;
-      padding: 6px 11px; border-radius: 8px; cursor: pointer;
-      border: 1.5px solid var(--line); background: transparent;
-      color: var(--dim); font-size: 11px; letter-spacing: 0.12em; font-weight: 700;
-      transition: border-color .15s, color .15s; text-decoration: none;
-      box-shadow: none;
-    }
-    .back-btn:hover { border-color: var(--line2); color: var(--ink); box-shadow: none; transform: none; }
-
-    .ghost-btn {
-      padding: 7px 14px; border-radius: 8px;
-      border: 1.5px solid var(--line); background: transparent;
-      color: var(--ink); font-size: 12px; font-weight: 600; letter-spacing: .12em;
-      cursor: pointer; transition: border-color .15s; box-shadow: none;
-      text-decoration: none; display: inline-block;
-    }
-    .ghost-btn:hover { border-color: var(--line2); box-shadow: none; transform: none; }
-
-    .start-btn {
-      display: flex; align-items: center; gap: 7px;
-      padding: 8px 16px; border-radius: 8px;
-      background: var(--gold); border: none;
-      color: var(--bg); font-family: 'Anton', sans-serif;
-      font-size: 13px; letter-spacing: .1em; cursor: pointer;
-      transition: filter .15s; box-shadow: none;
-    }
-    .start-btn:hover { filter: brightness(1.1); box-shadow: none; transform: none; }
-
-    /* ── Dashboard Grid ────────────────────────────────────────── */
-    #main { flex: 1; overflow-y: auto; padding: 30px 20px; }
-    .page-title { font-family: 'Anton', sans-serif; font-size: 32px; letter-spacing: .02em; margin-bottom: 24px; color: var(--ink); }
-
-    .board-grid {
+    .db-root {
+      height: 100vh;
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 16px;
+      grid-template-rows: 60px 1fr;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Space Grotesk', sans-serif;
+      overflow: hidden;
     }
 
-    .board-card {
-      background: var(--bg2); border: 1.5px solid var(--line);
-      border-radius: 16px; padding: 24px;
-      display: flex; flex-direction: column;
-      transition: border-color .15s, transform .15s; position: relative;
+    /* ── Top bar ──────────────────────────────────────────────── */
+    .db-top {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 24px; gap: 20px;
+      background: var(--bg2); border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
     }
-    .board-card:hover { border-color: var(--line2); transform: translateY(-2px); }
-
-    .board-card-title { font-family: 'Anton', sans-serif; font-size: 22px; color: var(--gold); letter-spacing: .03em; margin: 0; line-height: 1.2; }
-    .board-card-date { font-size: 10px; color: var(--dim); letter-spacing: .1em; font-weight: 700; margin-top: 6px; }
-
-    .board-card-actions { display: flex; gap: 10px; margin-top: 28px; }
-    .board-card-del {
-      position: absolute; top: 16px; right: 16px;
-      width: 24px; height: 24px; border: none; background: transparent;
-      color: var(--dim); font-size: 18px; cursor: pointer;
+    .db-top-left { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .db-brand { font-family: 'Anton', sans-serif; font-size: 24px; color: var(--gold); letter-spacing: .02em; line-height: 1; text-decoration: none; }
+    .db-badge { font-size: 10px; color: var(--dim); letter-spacing: .24em; padding: 3px 8px; border-radius: 4px; background: var(--bg); }
+    .db-search {
+      flex: 1; max-width: 460px;
+      display: flex; align-items: center; gap: 10px;
+      background: var(--bg); border: 1px solid var(--line2);
+      border-radius: 8px; padding: 8px 14px;
+    }
+    .db-search-icon { color: var(--dim2); font-size: 15px; }
+    .db-search input {
+      flex: 1; background: transparent; border: none; outline: none;
+      color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: 13px;
+      width: 100%; padding: 0;
+    }
+    .db-search-kbd {
+      font-size: 10px; color: var(--dim2); letter-spacing: .14em;
+      border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px; flex-shrink: 0;
+    }
+    .db-top-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .db-ghost-btn {
+      background: transparent; color: var(--ink);
+      border: 1px solid var(--line2); padding: 8px 14px; border-radius: 10px;
+      font-family: 'Anton', sans-serif; font-size: 11px; letter-spacing: .16em;
+      cursor: pointer; transition: border-color .15s; box-shadow: none; white-space: nowrap;
+    }
+    .db-ghost-btn:hover { border-color: var(--dim); transform: none; box-shadow: none; }
+    .db-icon-btn {
+      background: transparent; color: var(--dim);
+      border: 1px solid var(--line); padding: 8px 10px; border-radius: 8px;
+      font-size: 13px; cursor: pointer; box-shadow: none;
+    }
+    .db-icon-btn:hover { color: var(--ink); transform: none; box-shadow: none; }
+    .db-avatar {
+      width: 34px; height: 34px; border-radius: 999px; background: var(--violet);
       display: flex; align-items: center; justify-content: center;
-      transition: color .15s; box-shadow: none;
+      font-family: 'Anton', sans-serif; font-size: 13px; color: #0E0B22;
+      cursor: pointer; flex-shrink: 0;
     }
-    .board-card-del:hover { color: var(--red); box-shadow: none; transform: none; }
 
-    /* ── Modal ─────────────────────────────────────────────────── */
-    #startModal {
-      position: fixed; inset: 0; background: rgba(0,0,0,.8);
-      z-index: 100; display: none; align-items: center; justify-content: center;
-      backdrop-filter: blur(4px);
+    /* ── Body ─────────────────────────────────────────────────── */
+    .db-body {
+      display: grid;
+      grid-template-columns: 240px 1fr 380px;
+      min-height: 0; overflow: hidden;
     }
-    .modal-content {
-      background: var(--bg2); border: 1.5px solid var(--line);
-      border-radius: 16px; padding: 30px; width: 100%; max-width: 420px;
-      display: flex; flex-direction: column; gap: 20px;
-    }
-    .modal-title { font-family: 'Anton', sans-serif; font-size: 24px; color: var(--gold); letter-spacing: .04em; }
-    .field-lbl { font-size: 10px; color: var(--dim); letter-spacing: .22em; font-weight: 600; margin-bottom: 6px; }
 
-    .modal-actions { display: flex; gap: 10px; margin-top: 10px; }
-
-    /* Toggle from editor */
-    .toggle {
-      width: 40px; height: 22px; border-radius: 999px; background: var(--bg3);
-      border: 1px solid var(--line2); cursor: pointer; position: relative;
-      transition: background .2s;
+    /* ── Sidebar ──────────────────────────────────────────────── */
+    .db-side {
+      border-right: 1px solid var(--line);
+      padding: 20px 14px;
+      display: flex; flex-direction: column; gap: 22px;
+      overflow-y: auto; background: var(--bg);
     }
-    .toggle::after {
-      content: ''; position: absolute; top: 3px; left: 3px;
-      width: 14px; height: 14px; border-radius: 50%;
-      background: var(--dim); transition: transform .2s, background .2s;
+    .db-sec-hdr { font-size: 10px; color: var(--dim2); letter-spacing: .24em; font-family: 'Anton', sans-serif; }
+    .db-nav { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+    .db-nav-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 8px; cursor: pointer;
+      border: 1px solid transparent;
+      transition: background .1s;
     }
-    .toggle.on { background: #3A6FDF; border-color: #5B8DEF; }
-    .toggle.on::after { transform: translateX(18px); background: #fff; }
+    .db-nav-row.active { background: var(--bg2); border-color: var(--line2); }
+    .db-nav-row:not(.active):hover { background: var(--bg2); }
+    .db-nav-glyph { width: 16px; text-align: center; font-size: 13px; }
+    .db-nav-row.active .db-nav-glyph { color: var(--gold); }
+    .db-nav-row:not(.active) .db-nav-glyph { color: var(--dim2); }
+    .db-nav-label { flex: 1; font-size: 13px; }
+    .db-nav-row.active .db-nav-label { color: var(--ink); }
+    .db-nav-row:not(.active) .db-nav-label { color: var(--dim); }
+    .db-nav-count { font-size: 10px; font-family: 'Anton', sans-serif; letter-spacing: .08em; }
+    .db-nav-row.active .db-nav-count { color: var(--gold); }
+    .db-nav-row:not(.active) .db-nav-count { color: var(--dim2); }
 
-    input[type="number"] {
+    .db-room-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 8px; border-radius: 8px;
+      border: 1px solid var(--line);
+      margin-top: 4px;
+    }
+    .db-room-row.live { background: var(--bg3); border-color: rgba(94,235,193,.33); }
+    .db-room-code { font-family: 'Anton', sans-serif; font-size: 13px; letter-spacing: .16em; }
+    .db-room-row.live .db-room-code { color: var(--mint); }
+    .db-room-row:not(.live) .db-room-code { color: var(--dim); }
+    .db-room-sub { flex: 1; font-size: 10px; color: var(--dim2); letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-live-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--mint); box-shadow: 0 0 8px var(--mint); animation: jp-pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
+
+    /* ── Library ──────────────────────────────────────────────── */
+    .db-lib {
+      padding: 20px 22px 24px;
+      overflow-y: auto;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .db-lib-hdr { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+    .db-lib-title-wrap { display: flex; align-items: baseline; gap: 14px; }
+    .db-lib-title { font-family: 'Anton', sans-serif; font-size: 36px; letter-spacing: .02em; margin: 0; color: var(--ink); line-height: 1; }
+    .db-lib-stats { font-size: 12px; color: var(--dim); letter-spacing: .04em; }
+    .db-sort-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .db-sort-btn {
+      padding: 6px 10px; border-radius: 8px; border: 1px solid transparent;
+      background: transparent; color: var(--dim); font-family: 'Anton', sans-serif;
+      font-size: 10px; letter-spacing: .16em; cursor: pointer; box-shadow: none;
+    }
+    .db-sort-btn:hover { color: var(--ink); transform: none; box-shadow: none; }
+    .db-sort-btn.active { background: var(--bg2); color: var(--gold); border-color: var(--line2); }
+    .db-view-btn {
+      width: 30px; height: 30px; padding: 0; border-radius: 8px;
+      background: transparent; color: var(--dim); font-size: 15px;
+      border: 1px solid var(--line); cursor: pointer; box-shadow: none;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .db-view-btn.active { background: var(--bg2); color: var(--gold); border-color: var(--line2); }
+    .db-view-btn:hover { color: var(--ink); transform: none; box-shadow: none; }
+    .db-divider { width: 1px; height: 22px; background: var(--line); }
+
+    /* Spotlight */
+    .db-spotlight {
+      background: linear-gradient(140deg, var(--bg3) 0%, var(--bg2) 60%, var(--bg) 100%);
+      border-radius: 16px; border: 1.5px solid var(--gold);
+      box-shadow: 0 0 40px rgba(255,200,61,.14), inset 0 1px 0 rgba(255,255,255,.04);
+      padding: 20px 22px;
+      display: grid; grid-template-columns: 1fr auto auto;
+      gap: 22px; align-items: center;
+      position: relative; overflow: hidden;
+      flex-shrink: 0;
+    }
+    .db-spotlight-diag {
+      position: absolute; inset: 0; pointer-events: none;
+      background-image: repeating-linear-gradient(135deg, rgba(255,200,61,.06) 0px, rgba(255,200,61,.06) 1px, transparent 1px, transparent 14px);
+    }
+    .db-mini-board {
+      background: var(--bg); padding: 2px 6px 6px; border-radius: 8px;
+      border: 1px solid var(--line2); position: relative; z-index: 1;
+      height: 160px; overflow: hidden;
+    }
+    .db-mini-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
+    .db-mini-hdr {
+      height: 100px; border-radius: 3px; background: linear-gradient(180deg, var(--violet), #5A3FE0);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Anton', sans-serif; font-size: 11px; color: #fff;
+      text-align: center; letter-spacing: .08em; padding: 6px; line-height: 1.25;
+      word-break: break-word;
+    }
+    .db-mini-cell {
+      height: 32px; border-radius: 2px; background: var(--bg4);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Anton', sans-serif; font-size: 9px; color: var(--gold);
+    }
+    .db-mini-cell.faded { opacity: .3; }
+
+    .db-spot-mid { position: relative; z-index: 1; }
+    .db-spot-label { font-size: 10px; letter-spacing: .24em; font-family: 'Anton', sans-serif; margin-bottom: 6px; }
+    .db-spot-title { font-family: 'Anton', sans-serif; font-size: 36px; letter-spacing: .02em; line-height: 1; margin-bottom: 10px; }
+    .db-spot-stats { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--dim); letter-spacing: .04em; }
+    .db-stat-item { display: inline-flex; align-items: baseline; gap: 5px; }
+    .db-stat-lbl { font-size: 10px; color: var(--dim2); letter-spacing: .22em; font-family: 'Anton', sans-serif; }
+    .db-stat-val { font-family: 'Anton', sans-serif; font-size: 15px; color: var(--ink); }
+    .db-stat-sep { width: 3px; height: 3px; border-radius: 999px; background: var(--dim2); }
+
+    .db-spot-actions { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; min-width: 160px; }
+    .db-spot-action {
+      padding: 9px 14px; border-radius: 8px; font-family: 'Anton', sans-serif;
+      font-size: 11px; letter-spacing: .16em; cursor: pointer; box-shadow: none;
+      border: 1px solid var(--line2); background: transparent; color: var(--ink); text-align: center; text-decoration: none; display: block;
+    }
+    .db-spot-action:hover { border-color: var(--dim); color: var(--ink); text-decoration: none; transform: none; box-shadow: none; }
+
+    /* Tiles grid */
+    .db-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .db-tile {
+      background: var(--bg2); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px;
+      display: flex; flex-direction: column; gap: 10px;
+      position: relative; transition: border-color .15s;
+    }
+    .db-tile:hover { border-color: var(--line2); }
+    .db-tile.selected { box-shadow: 0 0 0 2px var(--tile-accent, var(--gold)); border-color: var(--tile-accent, var(--gold)) !important; }
+    .db-tile-preview { background: var(--bg); padding: 6px; border-radius: 6px; border: 1px solid var(--line); }
+    .db-tile-preview .db-mini-grid { gap: 2px; }
+    .db-tile-preview .db-mini-hdr { height: 13px; }
+    .db-tile-preview .db-mini-cell { font-size: 0; }
+    .db-tile-status { display: flex; align-items: center; gap: 6px; }
+    .db-status-dot { width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0; }
+    .db-status-lbl { font-size: 9px; letter-spacing: .22em; font-family: 'Anton', sans-serif; }
+    .db-tile-title { font-family: 'Anton', sans-serif; font-size: 17px; letter-spacing: .03em; line-height: 1.1; color: var(--ink); }
+    .db-tile-stats { font-size: 11px; color: var(--dim); letter-spacing: .04em; }
+    .db-tile-foot {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-top: 10px; border-top: 1px dashed var(--line); margin-top: auto;
+    }
+    .db-tile-meta { font-size: 10px; color: var(--dim2); letter-spacing: .04em; }
+    .db-select-btn {
+      padding: 5px 10px; border-radius: 6px; font-family: 'Anton', sans-serif;
+      font-size: 10px; letter-spacing: .18em; cursor: pointer; box-shadow: none; background: transparent;
+    }
+    .db-select-btn:hover { filter: brightness(1.2); transform: none; box-shadow: none; }
+
+    /* ── Launch rail ──────────────────────────────────────────── */
+    .db-launch {
+      border-left: 1px solid var(--line);
+      background: var(--bg2);
+      padding: 20px 20px 24px;
+      display: flex; flex-direction: column; gap: 16px;
+      overflow-y: auto;
+    }
+    .db-launch-lbl { font-size: 10px; color: var(--dim2); letter-spacing: .24em; font-family: 'Anton', sans-serif; margin-bottom: 4px; }
+    .db-launch-title { font-family: 'Anton', sans-serif; font-size: 26px; letter-spacing: .02em; line-height: 1.1; color: var(--ink); }
+
+    .db-field-lbl { font-size: 10px; color: var(--dim2); letter-spacing: .24em; font-family: 'Anton', sans-serif; margin-bottom: 8px; }
+    .db-mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .db-mode-opt {
+      padding: 12px; border-radius: 10px; cursor: pointer;
+      display: flex; flex-direction: column; gap: 4px;
+      border: 1.5px solid var(--line); background: var(--bg);
+      transition: border-color .15s, background .15s;
+    }
+    .db-mode-opt.active { background: var(--bg3); border-color: var(--gold); }
+    .db-mode-opt-top { display: flex; align-items: center; gap: 8px; }
+    .db-mode-glyph { font-size: 15px; }
+    .db-mode-opt.active .db-mode-glyph { color: var(--gold); }
+    .db-mode-opt:not(.active) .db-mode-glyph { color: var(--dim); }
+    .db-mode-name { font-family: 'Anton', sans-serif; font-size: 14px; letter-spacing: .08em; }
+    .db-mode-opt.active .db-mode-name { color: var(--gold); }
+    .db-mode-opt:not(.active) .db-mode-name { color: var(--ink); }
+    .db-mode-sub { font-size: 10px; color: var(--dim); letter-spacing: .04em; line-height: 1.35; }
+
+    .db-round-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .db-round-chip {
+      padding: 10px 0; border-radius: 8px; font-family: 'Anton', sans-serif;
+      font-size: 11px; letter-spacing: .14em; cursor: pointer; box-shadow: none; text-align: center;
+      border: 1px solid var(--line); background: var(--bg); color: var(--dim);
+      transition: border-color .15s, background .15s, color .15s;
+    }
+    .db-round-chip.active { background: var(--bg3); color: var(--gold); border-color: var(--gold); }
+    .db-round-chip:hover:not(.active) { color: var(--ink); transform: none; box-shadow: none; }
+
+    .db-opt-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px; background: var(--bg); border-radius: 8px;
+      border: 1px solid var(--line); font-size: 12px; color: var(--ink);
+    }
+    .db-opt-rows { display: flex; flex-direction: column; gap: 6px; }
+    .db-tag-pill {
+      font-family: 'Anton', sans-serif; font-size: 10px; letter-spacing: .18em;
+      padding: 3px 8px; border-radius: 999px;
+    }
+
+    .db-num-teams { display: none; }
+    .db-num-teams input {
       background: var(--bg); border: 1.5px solid var(--line);
       border-radius: 8px; color: var(--ink); padding: 8px 12px;
-      font-family: inherit; font-size: 14px; outline: none;
+      font-family: 'Space Grotesk', sans-serif; font-size: 14px; outline: none; width: 100%;
     }
-    input[type="number"]:focus { border-color: var(--gold); }
+    .db-num-teams input:focus { border-color: var(--gold); }
+
+    .db-start-card {
+      margin-top: auto;
+      background: linear-gradient(160deg, var(--violet) 0%, #4830C9 100%);
+      border-radius: 14px; padding: 16px 18px;
+      box-shadow: 0 18px 40px rgba(124,92,255,.30), inset 0 -6px 0 rgba(0,0,0,.22);
+    }
+    .db-code-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .db-code-lbl { font-size: 10px; color: rgba(255,255,255,.7); letter-spacing: .22em; font-family: 'Anton', sans-serif; margin-bottom: 6px; }
+    .db-code-chars { display: flex; gap: 4px; }
+    .db-code-char {
+      width: 28px; height: 34px; border-radius: 5px;
+      background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.18);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Anton', sans-serif; font-size: 20px; color: #fff;
+    }
+    .db-regen-btn {
+      background: rgba(255,255,255,.12); color: #fff;
+      border: 1px solid rgba(255,255,255,.22); padding: 6px 10px;
+      border-radius: 6px; font-size: 14px; cursor: pointer; box-shadow: none;
+    }
+    .db-regen-btn:hover { background: rgba(255,255,255,.2); transform: none; box-shadow: none; }
+    .db-start-btn {
+      width: 100%; background: var(--gold); color: #0E0B22;
+      font-family: 'Anton', sans-serif; font-size: 20px; letter-spacing: .10em;
+      padding: 14px 0; border-radius: 10px; border: none; cursor: pointer;
+      box-shadow: 0 6px 0 rgba(0,0,0,.28); transition: filter .15s;
+    }
+    .db-start-btn:hover { filter: brightness(1.08); transform: none; }
+    .db-start-hint { margin-top: 8px; text-align: center; font-size: 10px; color: rgba(255,255,255,.72); letter-spacing: .14em; font-family: 'Anton', sans-serif; }
+
+    /* Filter hidden */
+    .db-tile.hidden-filter { display: none; }
   </style>
 </head>
 <body>
+<div class="db-root">
 
-  <!-- ── Header ──────────────────────────────────────────────────────────── -->
-  <div id="hdr">
-    <div id="hdr-left">
-      <a href="/" class="brand">JEOPARTY</a>
-      <span class="editor-badge">DASHBOARD</span>
+  <!-- ── Top bar ──────────────────────────────────────────────── -->
+  <header class="db-top">
+    <div class="db-top-left">
+      <a href="/" class="db-brand">JEOPARTY</a>
+      <span class="db-badge">HOST DASHBOARD</span>
     </div>
-    <div id="hdr-mid">
-      <span style="font-size:11px; color:var(--dim); letter-spacing:.1em; font-weight:700;">{Astro.locals.host.email.toUpperCase()}</span>
+    <div class="db-search">
+      <span class="db-search-icon">⌕</span>
+      <input id="searchInput" placeholder={`Search ${allCount} boards, tags, categories…`} autocomplete="off" />
+      <span class="db-search-kbd">⌘K</span>
     </div>
-    <div id="hdr-right">
-      <button id="logout" class="back-btn">LOG OUT</button>
-      <a href="/boards/new" class="start-btn">+ NEW BOARD</a>
+    <div class="db-top-right">
+      <button class="db-ghost-btn" id="newBoardBtn">+ NEW BOARD</button>
+      <button class="db-icon-btn" title="Help">?</button>
+      <div class="db-avatar" id="avatarBtn" title={host.email}>{avatarInitials}</div>
     </div>
-  </div>
+  </header>
 
-  <!-- ── Main ────────────────────────────────────────────────────────────── -->
-  <main id="main">
-    <div class="page-title">YOUR BOARDS</div>
+  <!-- ── Body ─────────────────────────────────────────────────── -->
+  <div class="db-body">
 
-    <div class="board-grid">
-      {boards.length === 0 && (
-        <div style="grid-column: 1 / -1; text-align:center; padding:60px 20px; background:var(--bg2); border:1.5px dashed var(--line); border-radius:16px;">
-          <p class="muted" style="font-size:16px;">No boards yet. Create one to get started!</p>
-          <a href="/boards/new" class="start-btn" style="display:inline-flex; margin-top:20px;">+ CREATE YOUR FIRST BOARD</a>
+    <!-- Sidebar -->
+    <aside class="db-side">
+      <div>
+        <div class="db-sec-hdr">LIBRARY</div>
+        <div class="db-nav">
+          <div class="db-nav-row active" data-filter="all">
+            <span class="db-nav-glyph">▦</span>
+            <span class="db-nav-label">All boards</span>
+            <span class="db-nav-count">{allCount}</span>
+          </div>
+          <div class="db-nav-row" data-filter="draft">
+            <span class="db-nav-glyph">✎</span>
+            <span class="db-nav-label">Drafts</span>
+            <span class="db-nav-count">{draftCount}</span>
+          </div>
+          <div class="db-nav-row" data-filter="ready">
+            <span class="db-nav-glyph">◆</span>
+            <span class="db-nav-label">Ready</span>
+            <span class="db-nav-count">{readyCount}</span>
+          </div>
+          <div class="db-nav-row" data-filter="played">
+            <span class="db-nav-glyph">▷</span>
+            <span class="db-nav-label">Played</span>
+            <span class="db-nav-count">{playedCount}</span>
+          </div>
+          <div class="db-nav-row" data-filter="archived">
+            <span class="db-nav-glyph">⬚</span>
+            <span class="db-nav-label">Archived</span>
+            <span class="db-nav-count">0</span>
+          </div>
+        </div>
+      </div>
+
+      {recentRooms.length > 0 && (
+        <div>
+          <div class="db-sec-hdr">RECENT ROOMS</div>
+          {recentRooms.map(r => (
+            <a href={`/game/${r.code}/host`} class={`db-room-row${r.live ? ' live' : ''}`} style="text-decoration:none;">
+              <span class="db-room-code">{r.code}</span>
+              <span class="db-room-sub">{r.subtitle}{r.live ? '' : ' · ended'}</span>
+              {r.live && <span class="db-live-dot"></span>}
+            </a>
+          ))}
         </div>
       )}
 
-      {boards.map((board) => (
-        <div class="board-card" data-board-id={board.id}>
-          <button class="board-card-del" onclick={`deleteBoard(${board.id})`} title="Delete Board">×</button>
-          <div>
-            <h3 class="board-card-title">{board.title || 'UNTITLED BOARD'}</h3>
-            <p class="board-card-date">UPDATED: {board.updatedAt ? new Date(board.updatedAt).toLocaleString().toUpperCase() : '—'}</p>
-          </div>
-          <div class="board-card-actions">
-            <a href={`/boards/${board.id}`} class="ghost-btn" style="flex:1; text-align:center;">EDIT</a>
-            <button class="start-btn start-trigger" data-board-id={board.id} style="flex:1.5;">▶ START GAME</button>
+    </aside>
+
+    <!-- Library -->
+    <main class="db-lib">
+      <div class="db-lib-hdr">
+        <div class="db-lib-title-wrap">
+          <h1 class="db-lib-title">YOUR<br/>BOARDS</h1>
+          <span class="db-lib-stats">
+            {allCount} board{allCount !== 1 ? 's' : ''} · {totalClues} clues
+            {globalLastPlayed ? ` · last played ${timeAgo(globalLastPlayed)}` : ''}
+          </span>
+        </div>
+        <div class="db-sort-wrap">
+          <button class="db-sort-btn active" data-sort="recent">RECENT</button>
+          <button class="db-sort-btn" data-sort="name">NAME</button>
+          <button class="db-sort-btn" data-sort="played">MOST PLAYED</button>
+          <span class="db-divider"></span>
+          <button class="db-view-btn active" title="Grid">▦</button>
+          <button class="db-view-btn" title="List">≡</button>
+        </div>
+      </div>
+
+      <!-- Spotlight -->
+      <div id="spotlight" class="db-spotlight">
+        <div class="db-spotlight-diag"></div>
+        <div class="db-mini-board" id="spotMiniBoard">
+          <div class="db-mini-grid" id="spotMiniGrid">
+            {Array.from({length:5}).map(() => <div class="db-mini-hdr"></div>)}
+            {Array.from({length:25}).map((_, i) => (
+              <div class={`db-mini-cell${i%7===0?' faded':''}`}>${(Math.floor(i/5)+1)*200}</div>
+            ))}
           </div>
         </div>
-      ))}
-    </div>
-  </main>
-
-  <!-- ── Start game modal ────────────────────────────────────────────────── -->
-  <div id="startModal">
-    <div class="modal-content">
-      <div class="modal-title">START GAME</div>
-      
-      <div style="display:flex; align-items:center; justify-content:space-between;">
-        <span class="field-lbl" style="margin-bottom:0;">TEAM MODE</span>
-        <button id="teamModeToggle" class="toggle"></button>
+        <div class="db-spot-mid">
+          <div class="db-spot-label" id="spotLabel" style="color:var(--gold)">● SELECTED BOARD</div>
+          <div class="db-spot-title" id="spotTitle">—</div>
+          <div class="db-spot-stats" id="spotStats"></div>
+        </div>
+        <div class="db-spot-actions">
+          <a id="spotEditBtn" href="#" class="db-spot-action">OPEN IN EDITOR</a>
+          <button class="db-spot-action" id="spotDupBtn">DUPLICATE</button>
+          <button class="db-spot-action" id="spotDeleteBtn" style="color:var(--red);border-color:rgba(255,90,90,.3)">DELETE</button>
+        </div>
       </div>
 
-      <div id="teamCountWrap" style="display:none;">
-        <div class="field-lbl">NUMBER OF TEAMS (2–6)</div>
-        <input id="numTeams" type="number" min="2" max="6" value="2" style="width:100%;" />
+      <!-- Tile grid -->
+      <div class="db-tiles" id="tilesGrid">
+        {boards.map((b) => (
+          <div
+            class="db-tile"
+            data-board-id={b.id}
+            data-status={b.status}
+            data-plays={b.plays}
+            data-title={b.title.toLowerCase()}
+            data-accent={b.accent}
+            style={`--tile-accent:${b.accent}`}
+            onclick={`selectBoard(${b.id})`}
+          >
+            <div class="db-tile-preview">
+              <div class="db-mini-grid">
+                {Array.from({length:5}).map(() => <div class="db-mini-hdr" style={`background:${b.accent};opacity:.85`}></div>)}
+                {Array.from({length:25}).map((_, i) => <div class="db-mini-cell" style={i%7===0?'opacity:.35':''}></div>)}
+              </div>
+            </div>
+            <div>
+              <div class="db-tile-status">
+                <span class="db-status-dot" style={`background:${b.accent}`}></span>
+                <span class="db-status-lbl" style={`color:${b.status==='ready'?b.accent:'var(--dim)'}`}>
+                  {b.status.toUpperCase()}
+                </span>
+              </div>
+              <div class="db-tile-title">{b.title.toUpperCase()}</div>
+              <div class="db-tile-stats">{b.roundCount} round{b.roundCount !== 1 ? 's' : ''} · {b.clues} clues</div>
+            </div>
+            <div class="db-tile-foot">
+              <span class="db-tile-meta">played {b.plays}× · {b.lastPlayed}</span>
+              <button
+                class="db-select-btn"
+                style={`color:${b.accent};border:1px solid ${b.accent}55`}
+                onclick={`selectBoard(${b.id})`}
+              >SELECT</button>
+            </div>
+          </div>
+        ))}
+        {boards.length === 0 && (
+          <div style="grid-column:1/-1; padding:48px 24px; text-align:center; background:var(--bg2); border:1.5px dashed var(--line2); border-radius:14px;">
+            <div style="font-family:'Anton',sans-serif;font-size:18px;color:var(--dim);letter-spacing:.04em;margin-bottom:8px;">NO BOARDS YET</div>
+            <div style="font-size:13px;color:var(--dim2);">Create your first board to get started.</div>
+          </div>
+        )}
+      </div>
+    </main>
+
+    <!-- Launch rail -->
+    <aside class="db-launch">
+      <div>
+        <div class="db-launch-lbl">START A GAME</div>
+        <div class="db-launch-title" id="launchTitle">—</div>
       </div>
 
-      <div class="modal-actions">
-        <button id="confirmStart" class="start-btn" style="flex:1;">START!</button>
-        <button id="cancelStart" class="ghost-btn">CANCEL</button>
+      <div>
+        <div class="db-field-lbl">MODE</div>
+        <div class="db-mode-grid">
+          <div class="db-mode-opt active" data-mode="solo" id="modeSolo">
+            <div class="db-mode-opt-top">
+              <span class="db-mode-glyph">◯</span>
+              <span class="db-mode-name">SOLO</span>
+            </div>
+            <div class="db-mode-sub">every player for themself</div>
+          </div>
+          <div class="db-mode-opt" data-mode="teams" id="modeTeams">
+            <div class="db-mode-opt-top">
+              <span class="db-mode-glyph">◇</span>
+              <span class="db-mode-name">TEAMS</span>
+            </div>
+            <div class="db-mode-sub" id="teamsSub">3 teams · combined scores</div>
+          </div>
+        </div>
+        <div class="db-num-teams" id="numTeamsWrap" style="margin-top:8px;">
+          <div class="db-field-lbl" style="margin-bottom:4px;">NUMBER OF TEAMS (2–6)</div>
+          <input id="numTeamsInput" type="number" min="2" max="6" value="3" />
+        </div>
       </div>
-    </div>
+
+      <div>
+        <div class="db-field-lbl">STARTING ROUND</div>
+        <div class="db-round-grid" id="roundPicker">
+          <button class="db-round-chip active" data-round="0">ROUND 1</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="db-field-lbl">OPTIONS</div>
+        <div class="db-opt-rows">
+          <div class="db-opt-row">
+            <span>Daily Doubles</span>
+            <span class="db-tag-pill" style="color:var(--mint);border:1px solid rgba(94,235,193,.33)">ON</span>
+          </div>
+          <div class="db-opt-row">
+            <span>Per-clue timer</span>
+            <span class="db-tag-pill" style="color:var(--gold);border:1px solid rgba(255,200,61,.33)">20s</span>
+          </div>
+          <div class="db-opt-row">
+            <span>Sound effects</span>
+            <span class="db-tag-pill" style="color:var(--mint);border:1px solid rgba(94,235,193,.33)">ON</span>
+          </div>
+          <div class="db-opt-row">
+            <span>Shuffle categories</span>
+            <span class="db-tag-pill" style="color:var(--dim2);border:1px solid rgba(107,99,145,.33)">OFF</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="db-start-card">
+        <div class="db-code-row">
+          <div>
+            <div class="db-code-lbl">NEW ROOM CODE</div>
+            <div class="db-code-chars" id="codeChars">
+              <div class="db-code-char">—</div>
+            </div>
+          </div>
+          <button class="db-regen-btn" id="regenBtn" title="Regenerate code">↻</button>
+        </div>
+        <button class="db-start-btn" id="startBtn">▶ START GAME</button>
+        <div class="db-start-hint" id="startHint">SELECT A BOARD TO START</div>
+      </div>
+    </aside>
   </div>
+</div>
 
-  <script is:inline>
-    // @ts-nocheck
-    let pendingBoardId = null;
-    const modal = document.getElementById('startModal');
-    const teamToggle = document.getElementById('teamModeToggle');
-    const teamCountWrap = document.getElementById('teamCountWrap');
+<script is:inline define:vars={{ boardDataJson: JSON.stringify(boards) }}>
+// @ts-nocheck
+const boards = JSON.parse(boardDataJson);
+let selectedBoardId = boards[0]?.id ?? null;
+let selectedMode = 'solo';
+let selectedRound = 0;
 
-    teamToggle.addEventListener('click', () => {
-      teamToggle.classList.toggle('on');
-      teamCountWrap.style.display = teamToggle.classList.contains('on') ? 'block' : 'none';
+// ── Board selection ──────────────────────────────────────────────────────────
+function selectBoard(id) {
+  selectedBoardId = id;
+  selectedRound = 0;
+  const b = boards.find(x => x.id === id);
+  if (!b) return;
+
+  // Highlight tile
+  document.querySelectorAll('.db-tile').forEach(el => {
+    el.classList.toggle('selected', Number(el.dataset.boardId) === id);
+  });
+
+  // Spotlight
+  document.getElementById('spotTitle').textContent = b.title.toUpperCase();
+  document.getElementById('spotLabel').style.color = b.accent;
+  const stats = document.getElementById('spotStats');
+  stats.innerHTML = `
+    <span class="db-stat-item"><span class="db-stat-lbl">ROUNDS</span><span class="db-stat-val">${b.roundCount}</span></span>
+    <span class="db-stat-sep"></span>
+    <span class="db-stat-item"><span class="db-stat-lbl">CLUES</span><span class="db-stat-val">${b.clues}</span></span>
+    <span class="db-stat-sep"></span>
+    <span class="db-stat-item"><span class="db-stat-lbl">PLAYS</span><span class="db-stat-val">${b.plays}</span></span>
+    <span class="db-stat-sep"></span>
+    <span class="db-stat-item"><span class="db-stat-lbl">LAST</span><span class="db-stat-val">${b.lastPlayed}</span></span>
+  `;
+  // Rebuild mini board grid with actual category names
+  const cats = b.firstRoundCategories.length ? b.firstRoundCategories : Array(5).fill('');
+  const grid = document.getElementById('spotMiniGrid');
+  grid.style.gridTemplateColumns = `repeat(${cats.length}, 1fr)`;
+  const hdrHtml = cats.map(t =>
+    `<div class="db-mini-hdr" style="background:linear-gradient(180deg,${b.accent}ee,${b.accent}88)">${t.toUpperCase()}</div>`
+  ).join('');
+  const cellHtml = Array.from({length: cats.length * 5}, (_, i) =>
+    `<div class="db-mini-cell${i % cats.length === 2 && Math.floor(i/cats.length) === 2 ? ' faded' : ''}">$${(Math.floor(i/cats.length)+1)*200}</div>`
+  ).join('');
+  grid.innerHTML = hdrHtml + cellHtml;
+  document.getElementById('spotEditBtn').href = `/boards/${id}`;
+  document.getElementById('spotDeleteBtn').onclick = () => deleteBoard(id);
+
+  // Spotlight border color
+  const spotlight = document.getElementById('spotlight');
+  spotlight.style.borderColor = b.accent;
+  spotlight.style.boxShadow = `0 0 40px ${b.accent}22, inset 0 1px 0 rgba(255,255,255,.04)`;
+  const diag = spotlight.querySelector('.db-spotlight-diag');
+  if (diag) diag.style.backgroundImage = `repeating-linear-gradient(135deg, ${b.accent}08 0px, ${b.accent}08 1px, transparent 1px, transparent 14px)`;
+
+  // Launch rail
+  document.getElementById('launchTitle').textContent = b.title.toUpperCase();
+  updateRoundPicker(b);
+  updateCodePreview();
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('startHint').textContent = `HOST FROM PHONE · PLAYERS JOIN AT ${location.host}`;
+}
+
+function updateRoundPicker(b) {
+  const picker = document.getElementById('roundPicker');
+  const titles = b.roundTitles.length ? b.roundTitles : ['Round 1'];
+  picker.innerHTML = titles.map((t, i) => `
+    <button class="db-round-chip${i === 0 ? ' active' : ''}" data-round="${i}" onclick="pickRound(${i})">${t.toUpperCase()}</button>
+  `).join('') + `<button class="db-round-chip" data-round="final" onclick="pickRound('final')">FINAL</button>`;
+  selectedRound = 0;
+}
+
+function pickRound(idx) {
+  selectedRound = idx;
+  document.querySelectorAll('.db-round-chip').forEach(el => {
+    el.classList.toggle('active', String(el.dataset.round) === String(idx));
+  });
+}
+
+// ── Mode toggle ──────────────────────────────────────────────────────────────
+document.getElementById('modeSolo').addEventListener('click', () => {
+  selectedMode = 'solo';
+  document.getElementById('modeSolo').classList.add('active');
+  document.getElementById('modeTeams').classList.remove('active');
+  document.getElementById('numTeamsWrap').style.display = 'none';
+});
+document.getElementById('modeTeams').addEventListener('click', () => {
+  selectedMode = 'teams';
+  document.getElementById('modeTeams').classList.add('active');
+  document.getElementById('modeSolo').classList.remove('active');
+  document.getElementById('numTeamsWrap').style.display = 'block';
+});
+document.getElementById('numTeamsInput').addEventListener('input', (e) => {
+  const n = Math.max(2, Math.min(6, Number(e.target.value) || 3));
+  document.getElementById('teamsSub').textContent = `${n} teams · combined scores`;
+});
+
+// ── Preview code ─────────────────────────────────────────────────────────────
+const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+function genCode() { return Array.from({length:4}, () => CHARS[Math.floor(Math.random()*26)]).join(''); }
+let previewCode = genCode();
+function updateCodePreview() {
+  previewCode = genCode();
+  const wrap = document.getElementById('codeChars');
+  wrap.innerHTML = previewCode.split('').map(c =>
+    `<div class="db-code-char">${c}</div>`
+  ).join('');
+}
+document.getElementById('regenBtn').addEventListener('click', updateCodePreview);
+
+// ── Start game ───────────────────────────────────────────────────────────────
+document.getElementById('startBtn').addEventListener('click', async () => {
+  if (!selectedBoardId) return;
+  const teamMode = selectedMode === 'teams';
+  const numTeams = teamMode ? Math.max(2, Math.min(6, Number(document.getElementById('numTeamsInput').value) || 3)) : 0;
+  const startingRound = typeof selectedRound === 'number' ? selectedRound : 0;
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true; btn.textContent = 'CREATING…';
+  const res = await fetch('/api/games/create', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ boardId: selectedBoardId, teamMode, numTeams, startingRound }),
+  });
+  if (!res.ok) { btn.disabled = false; btn.textContent = '▶ START GAME'; alert('Could not create game'); return; }
+  const json = await res.json();
+  location.href = `/game/${json.id}/host`;
+});
+
+// ── New board ────────────────────────────────────────────────────────────────
+document.getElementById('newBoardBtn').addEventListener('click', async () => {
+  const res = await fetch('/api/boards', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ title: 'New Jeoparty Board' }) });
+  if (res.ok) { const b = await res.json(); location.href = `/boards/${b.id}`; }
+});
+
+// ── Duplicate / delete ───────────────────────────────────────────────────────
+document.getElementById('spotDupBtn').addEventListener('click', () => {
+  // No-op for now (feature not implemented)
+  alert('Duplicate not yet implemented.');
+});
+
+async function deleteBoard(id) {
+  if (!confirm('Delete this board? This cannot be undone.')) return;
+  const res = await fetch(`/api/boards/${id}`, { method: 'DELETE' });
+  if (res.ok) { location.reload(); }
+  else { alert('Failed to delete board.'); }
+}
+window.deleteBoard = deleteBoard;
+
+// ── Avatar (logout) ──────────────────────────────────────────────────────────
+document.getElementById('avatarBtn').addEventListener('click', async () => {
+  if (!confirm('Log out?')) return;
+  await fetch('/api/auth/logout', { method: 'POST' });
+  location.href = '/';
+});
+
+// ── Sidebar filter ────────────────────────────────────────────────────────────
+document.querySelectorAll('.db-nav-row').forEach(row => {
+  row.addEventListener('click', () => {
+    document.querySelectorAll('.db-nav-row').forEach(r => r.classList.remove('active'));
+    row.classList.add('active');
+    const filter = row.dataset.filter;
+    document.querySelectorAll('.db-tile').forEach(tile => {
+      const status = tile.dataset.status;
+      const plays = Number(tile.dataset.plays);
+      let show = true;
+      if (filter === 'draft') show = status === 'draft';
+      else if (filter === 'ready') show = status === 'ready';
+      else if (filter === 'played') show = plays > 0;
+      else if (filter === 'archived') show = false;
+      tile.classList.toggle('hidden-filter', !show);
     });
+  });
+});
 
-    for (const btn of document.querySelectorAll('.start-trigger')) {
-      btn.addEventListener('click', () => {
-        pendingBoardId = Number(btn.dataset.boardId);
-        modal.style.display = 'flex';
-      });
-    }
-
-    document.getElementById('cancelStart').addEventListener('click', () => { modal.style.display = 'none'; });
-    modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
-
-    document.getElementById('confirmStart').addEventListener('click', async () => {
-      const teamMode = teamToggle.classList.contains('on');
-      const numTeams = teamMode ? Number(document.getElementById('numTeams').value) : 0;
-      const res = await fetch('/api/games/create', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ boardId: pendingBoardId, teamMode, numTeams }),
-      });
-      if (!res.ok) return alert('Could not create game');
-      const json = await res.json();
-      location.href = `/game/${json.id}`;
+// ── Sort ──────────────────────────────────────────────────────────────────────
+document.querySelectorAll('.db-sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.db-sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const sort = btn.dataset.sort;
+    const grid = document.getElementById('tilesGrid');
+    const tiles = Array.from(grid.querySelectorAll('.db-tile'));
+    tiles.sort((a, b) => {
+      if (sort === 'name') return a.dataset.title.localeCompare(b.dataset.title);
+      if (sort === 'played') return Number(b.dataset.plays) - Number(a.dataset.plays);
+      return 0; // 'recent' = original order
     });
+    tiles.forEach(t => grid.appendChild(t));
+  });
+});
 
-    document.getElementById('logout').addEventListener('click', async () => {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      location.href = '/';
-    });
+// ── Search ────────────────────────────────────────────────────────────────────
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  const q = e.target.value.toLowerCase().trim();
+  document.querySelectorAll('.db-tile').forEach(tile => {
+    const match = !q || tile.dataset.title.includes(q);
+    tile.classList.toggle('hidden-filter', !match);
+  });
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    document.getElementById('searchInput').focus();
+  }
+});
 
-    async function deleteBoard(id) {
-      if (!confirm('Are you sure you want to delete this board? This cannot be undone.')) return;
-      const res = await fetch(`/api/boards/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        document.querySelector(`.board-card[data-board-id="${id}"]`)?.remove();
-        // If no more boards, just reload to show empty state
-        if (document.querySelectorAll('.board-card').length === 0) location.reload();
-      } else {
-        alert('Failed to delete board');
-      }
-    }
-    window.deleteBoard = deleteBoard;
-  </script>
+// ── Init ──────────────────────────────────────────────────────────────────────
+if (boards.length > 0) {
+  selectBoard(boards[0].id);
+} else {
+  document.getElementById('startBtn').disabled = true;
+}
+updateCodePreview();
+</script>
 </body>
 </html>

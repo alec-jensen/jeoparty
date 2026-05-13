@@ -35,23 +35,34 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     </div>
 
     <!-- Active game screen -->
-    <div id="gameScreen" class="hidden" style="height:100%; display:flex; flex-direction:column; padding:24px; gap:16px;">
-      <!-- Header: title + scores -->
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
-        <div style="font-family:'Anton',sans-serif; font-size:2.2rem; font-weight:700; color:var(--accent);" id="gameTitle">Jeoparty</div>
-        <div id="roundBadge" style="font-family:'Anton',sans-serif; font-size:1.2rem; color:var(--muted);"></div>
-        <div id="presenterScores" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap;"></div>
+    <div id="gameScreen" class="hidden" style="height:100%; display:flex; flex-direction:column;">
+      <!-- Top bar -->
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:32px 56px 24px; flex-shrink:0;">
+        <div style="display:flex; align-items:baseline; gap:18px;">
+          <span style="font-family:'Anton',sans-serif; font-size:56px; letter-spacing:0.02em; color:var(--gold); line-height:1;">JEOPARTY</span>
+          <span style="font-size:18px; color:var(--dim); letter-spacing:0.18em;">ROOM · {gameId}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:28px;">
+          <div id="roundPill" style="padding:10px 18px; border-radius:999px; border:1.5px solid var(--gold); color:var(--gold); font-family:'Anton',sans-serif; letter-spacing:0.12em; font-size:16px;"></div>
+          <div id="cluesPill" style="padding:10px 18px; border-radius:999px; border:1.5px solid var(--line); color:var(--dim); font-family:'Anton',sans-serif; letter-spacing:0.12em; font-size:16px;"></div>
+        </div>
       </div>
       <!-- Board -->
-      <div id="presenterBoard" class="presenter-board-grid" style="flex:1; min-height:0;"></div>
+      <div style="flex:1; padding:0 56px 24px; display:flex; flex-direction:column; min-height:0;">
+        <div id="presenterBoard" class="presenter-board-grid" style="flex:1; min-height:0;"></div>
+      </div>
+      <!-- Scoreboard -->
+      <div id="presenterScores" style="padding:20px 56px 32px; display:grid; gap:14px; flex-shrink:0;"></div>
     </div>
 
     <!-- Question overlay -->
     <div id="questionOverlay" class="question-overlay hidden">
       <div class="q-category" id="qCategory"></div>
-      <div class="q-value" id="qValue"></div>
       <div class="q-text" id="qText"></div>
-      <div id="buzzBanner" class="buzz-banner hidden"></div>
+      <div id="buzzBanner" class="buzz-banner hidden">
+        <span class="buzz-dot"></span>
+        <span id="buzzName"></span>
+      </div>
     </div>
 
     <!-- Round advance notification -->
@@ -89,15 +100,19 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     /* ── State ─────────────────────────────────────────────────────────────── */
     let gameState = { board: null, usedQuestions: new Set(), scores: [], teams: [], currentPicker: null, currentRound: 0, totalRounds: 1, teamMode: false };
     let offset = 0;
+    const PLAYER_COLORS = ['#FFC83D', '#FF3D8E', '#5EEBC1', '#7C5CFF', '#FF8A3D', '#5BA9FF'];
+    let playerColorMap = {};
 
     const lobbyScreen    = document.getElementById('lobbyScreen');
     const gameScreen     = document.getElementById('gameScreen');
     const questionOverlay = document.getElementById('questionOverlay');
     const presenterBoard = document.getElementById('presenterBoard');
     const presenterScores = document.getElementById('presenterScores');
-    const roundBadge     = document.getElementById('roundBadge');
+    const roundPill      = document.getElementById('roundPill');
+    const cluesPill      = document.getElementById('cluesPill');
     const playerList     = document.getElementById('playerList');
     const buzzBanner     = document.getElementById('buzzBanner');
+    const buzzName       = document.getElementById('buzzName');
     const roundNotif     = document.getElementById('roundNotif');
     const roundNotifTitle = document.getElementById('roundNotifTitle');
 
@@ -170,20 +185,25 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
 
       if (msg.type === 'QUESTION_OPEN') {
         buzzBanner.classList.add('hidden');
-        document.getElementById('qCategory').textContent = msg.categoryTitle;
-        document.getElementById('qValue').textContent = '$' + msg.value + (msg.isDailyDouble ? ' ★ Daily Double' : '');
+        const valLabel = '$' + msg.value + (msg.isDailyDouble ? ' ★ DAILY DOUBLE' : '');
+        document.getElementById('qCategory').textContent = msg.categoryTitle + ' · ' + valLabel;
         document.getElementById('qText').textContent = msg.questionText;
         questionOverlay.classList.remove('hidden');
       }
 
       if (msg.type === 'BUZZ_WINNER') {
-        buzzBanner.textContent = '🎤 ' + msg.displayName;
+        const color = playerColorMap[msg.displayName] || '#FF3D8E';
+        buzzBanner.style.background = color;
+        buzzBanner.style.boxShadow = `0 12px 36px ${color}80`;
+        buzzName.textContent = msg.displayName + ' BUZZED IN';
         buzzBanner.classList.remove('hidden');
+        highlightBuzzedPlayer(msg.displayName);
       }
 
       if (msg.type === 'QUESTION_CLOSED') {
         questionOverlay.classList.add('hidden');
         buzzBanner.classList.add('hidden');
+        highlightBuzzedPlayer(null);
       }
 
       if (msg.type === 'SCORE_UPDATE') {
@@ -201,7 +221,6 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       if (msg.type === 'START_FINAL_JEOPARDY') {
         questionOverlay.classList.add('hidden');
         document.getElementById('qCategory').textContent = 'FINAL JEOPARDY';
-        document.getElementById('qValue').textContent = '';
         document.getElementById('qText').textContent = 'Players are entering their wagers...';
         questionOverlay.classList.remove('hidden');
       }
@@ -218,8 +237,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         const winner = [...gameState.scores].sort((a, b) => b.score - a.score)[0];
         if (winner) {
           document.getElementById('qCategory').textContent = 'GAME OVER';
-          document.getElementById('qValue').textContent = '';
-          document.getElementById('qText').textContent = `🏆 ${winner.displayName} wins!`;
+          document.getElementById('qText').textContent = `${winner.displayName} WINS!`;
           questionOverlay.classList.remove('hidden');
         }
       }
@@ -263,6 +281,31 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       renderBoard();
       renderScores();
       updateRoundBadge();
+
+      // Restore active question overlay
+      if (state.activeQuestion) {
+        const aq = state.activeQuestion;
+        const valLabel = '$' + aq.value + (aq.isDailyDouble ? ' ★ DAILY DOUBLE' : '');
+        document.getElementById('qCategory').textContent = aq.categoryTitle + ' · ' + valLabel;
+        document.getElementById('qText').textContent = aq.questionText;
+        questionOverlay.classList.remove('hidden');
+        // Restore buzz winner if present
+        if (state.buzzWinner) {
+          const color = playerColorMap[state.buzzWinner.displayName] || '#FF3D8E';
+          buzzBanner.style.background = color;
+          buzzBanner.style.boxShadow = `0 12px 36px ${color}80`;
+          buzzName.textContent = state.buzzWinner.displayName + ' BUZZED IN';
+          buzzBanner.classList.remove('hidden');
+          highlightBuzzedPlayer(state.buzzWinner.displayName);
+        } else {
+          buzzBanner.classList.add('hidden');
+          highlightBuzzedPlayer(null);
+        }
+      } else {
+        questionOverlay.classList.add('hidden');
+        buzzBanner.classList.add('hidden');
+        highlightBuzzedPlayer(null);
+      }
     }
 
     /* ── Render board ──────────────────────────────────────────────────────── */
@@ -273,8 +316,9 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       if (!numCats) return;
       const maxQ = Math.max(...cats.map((c) => c.questions.length));
       presenterBoard.style.gridTemplateColumns = `repeat(${numCats}, 1fr)`;
+      presenterBoard.style.gridTemplateRows = `120px repeat(${maxQ}, 1fr)`;
       presenterBoard.innerHTML = '';
-      // Headers row
+      // Category headers
       for (const cat of cats) {
         const h = document.createElement('div');
         h.className = 'presenter-cat-header';
@@ -282,35 +326,66 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         presenterBoard.appendChild(h);
       }
       // Question rows
+      let totalQ = 0, usedQ = 0;
       for (let qi = 0; qi < maxQ; qi++) {
         for (const cat of cats) {
           const q = cat.questions.sort((a, b) => a.value - b.value)[qi];
+          if (!q) { presenterBoard.appendChild(document.createElement('div')); continue; }
+          totalQ++;
+          const used = gameState.usedQuestions.has(q.id);
+          if (used) usedQ++;
           const cell = document.createElement('div');
-          cell.className = 'presenter-q-cell' + (q && gameState.usedQuestions.has(q.id) ? ' used' : '');
-          cell.textContent = q ? '$' + q.value : '';
+          cell.className = 'presenter-q-cell' + (used ? ' used' : '');
+          if (!used) cell.textContent = '$' + q.value;
           presenterBoard.appendChild(cell);
         }
       }
+      updateCluesPill(usedQ, totalQ);
     }
 
     /* ── Render scores ─────────────────────────────────────────────────────── */
     function renderScores() {
       presenterScores.innerHTML = '';
-      const items = gameState.teamMode && gameState.teams.length
-        ? gameState.teams.map((t) => ({ name: t.name, score: t.score })).sort((a, b) => b.score - a.score)
-        : [...gameState.scores].sort((a, b) => b.score - a.score).map((s) => ({ name: s.displayName, score: s.score }));
-      for (const item of items) {
-        const chip = document.createElement('div');
-        chip.style.cssText = 'font-family:Fredoka,sans-serif;font-size:1.3rem;background:rgba(34,22,80,.7);border:1px solid var(--border);border-radius:12px;padding:.35rem 1rem;white-space:nowrap;';
-        chip.innerHTML = `<span>${item.name}</span> <strong style="color:var(--accent);margin-left:.5rem;">$${item.score}</strong>`;
-        presenterScores.appendChild(chip);
-      }
+      playerColorMap = {};
+      const players = [...gameState.scores].sort((a, b) => b.score - a.score);
+      const cols = Math.min(Math.max(players.length, 1), 6);
+      presenterScores.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      players.forEach((p, i) => {
+        const color = PLAYER_COLORS[i % PLAYER_COLORS.length];
+        playerColorMap[p.displayName] = color;
+        const initial = (p.displayName || '?')[0].toUpperCase();
+        const scoreColor = p.score < 0 ? 'var(--red)' : 'var(--gold)';
+        const scoreStr = p.score < 0 ? `-$${Math.abs(p.score).toLocaleString()}` : `$${p.score.toLocaleString()}`;
+        const card = document.createElement('div');
+        card.className = 'presenter-player-card';
+        card.style.borderColor = 'transparent';
+        card.dataset.player = p.displayName;
+        card.innerHTML = `
+          <div class="presenter-player-avatar" style="background:${color}">${initial}</div>
+          <div style="flex:1;min-width:0;">
+            <div class="presenter-player-name">${p.displayName}</div>
+            <div class="presenter-player-score" style="color:${scoreColor}">${scoreStr}</div>
+          </div>`;
+        presenterScores.appendChild(card);
+      });
+    }
+
+    function highlightBuzzedPlayer(displayName) {
+      document.querySelectorAll('.presenter-player-card').forEach(card => {
+        const isBuzzed = card.dataset.player === displayName;
+        card.classList.toggle('buzzed', isBuzzed);
+        card.style.borderColor = isBuzzed ? (playerColorMap[displayName] || 'transparent') : 'transparent';
+        card.style.boxShadow = isBuzzed ? `0 0 24px ${playerColorMap[displayName] || '#FF3D8E'}55` : 'none';
+      });
+    }
+
+    function updateCluesPill(used, total) {
+      if (cluesPill) cluesPill.textContent = `${used} OF ${total} CLUES`;
     }
 
     function updateRoundBadge() {
-      if (gameState.totalRounds > 1) {
-        roundBadge.textContent = `Round ${gameState.currentRound + 1} of ${gameState.totalRounds}`;
-      }
+      if (roundPill) roundPill.textContent = `ROUND ${gameState.currentRound + 1} OF ${gameState.totalRounds}`;
+      if (cluesPill && !cluesPill.textContent) cluesPill.textContent = '— CLUES';
     }
   </script>
 </body>

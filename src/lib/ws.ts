@@ -15,6 +15,8 @@ import {
   type ActiveGame,
 } from './gameState';
 import { verifyHostToken, verifyPlayerToken } from './auth';
+import { chooseWinner as selectWinner } from './buzzLogic';
+import { validateBuzzTime } from './timeSync';
 
 type SocketMeta = {
   socketId: string;
@@ -106,17 +108,7 @@ async function closeQuestion(game: ActiveGame) {
 function chooseWinner(game: ActiveGame) {
   const current = game.currentQuestion;
   if (!current) return null;
-  const eligible = current.buzzOrder.filter((buzz) => !current.eliminated.has(buzz.playerId));
-  if (!eligible.length) return null;
-  let minT = Infinity;
-  for (const b of eligible) minT = Math.min(minT, b.clientTime);
-  const tier1 = eligible.filter((b) => b.clientTime === minT);
-  if (tier1.length === 1) return tier1[0];
-  let minR = Infinity;
-  for (const b of tier1) minR = Math.min(minR, b.receivedTime);
-  const tier2 = tier1.filter((b) => b.receivedTime === minR);
-  if (tier2.length === 1) return tier2[0];
-  return tier2[randomInt(tier2.length)]!;
+  return selectWinner(current.buzzOrder, current.eliminated, randomInt);
 }
 
 async function resolveBuzzerWinner(gameId: string) {
@@ -131,6 +123,7 @@ async function resolveBuzzerWinner(gameId: string) {
     return;
   }
   cq.buzzerOpen = false;
+  cq.winnerId = winner.playerId;
   broadcast(game, 'BUZZER_LOCKED');
   const player = game.players.get(winner.playerId);
   const openAt = cq.serverBuzzerOpenTime ?? winner.clientTime;
@@ -343,6 +336,7 @@ export function initWebSockets(server: import('node:http').Server) {
 
         if (data.type === 'DAILY_DOUBLE_WAGER_ACCEPTED' && current.currentQuestion?.isDailyDouble) {
           current.currentQuestion.dailyDoubleWager = Number(data.wager);
+          current.currentQuestion.winnerId = data.playerId as string;
           broadcast(current, 'BUZZ_WINNER', {
             playerId: data.playerId,
             displayName: current.players.get(data.playerId)?.displayName ?? 'Player',
@@ -482,7 +476,7 @@ export function initWebSockets(server: import('node:http').Server) {
           const now = Date.now();
           const t = Number(data.clientTime);
           const open = cq.serverBuzzerOpenTime ?? 0;
-          if (!Number.isFinite(t) || t < open || t > now + 2000) return;
+          if (!validateBuzzTime(t, open, now)) return;
           if (cq.buzzOrder.some((b) => b.playerId === meta.playerId)) return;
           if (cq.buzzOrder.length > 0 && cq.buzzCollectDeadline != null && now > cq.buzzCollectDeadline) return;
           cq.buzzOrder.push({ playerId: meta.playerId, clientTime: t, receivedTime: now });

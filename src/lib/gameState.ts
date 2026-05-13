@@ -60,6 +60,7 @@ export interface ActiveGame {
     buzzOrder: { playerId: string; clientTime: number; receivedTime: number }[];
     eliminated: Set<string>;
     dailyDoubleWager?: number;
+    winnerId?: string | null;
   } | null;
   finalJeopardy: {
     wagers: Map<string, number>;
@@ -343,6 +344,24 @@ export function currentRoundCategories(game: ActiveGame) {
 }
 
 export function boardState(game: ActiveGame) {
+  let activeQuestion: { categoryTitle: string; value: number; questionText: string; isDailyDouble: boolean } | null = null;
+  let buzzWinner: { playerId: string; displayName: string } | null = null;
+
+  if (game.currentQuestion) {
+    const cq = game.currentQuestion;
+    for (const cat of currentRoundCategories(game)) {
+      const q = cat.questions.find((it) => it.id === cq.questionId);
+      if (q) {
+        activeQuestion = { categoryTitle: cat.title, value: cq.value, questionText: q.question, isDailyDouble: cq.isDailyDouble };
+        break;
+      }
+    }
+    if (cq.winnerId) {
+      const p = game.players.get(cq.winnerId);
+      buzzWinner = { playerId: cq.winnerId, displayName: p?.displayName ?? 'Player' };
+    }
+  }
+
   return {
     board: {
       id: game.board.id,
@@ -357,5 +376,7 @@ export function boardState(game: ActiveGame) {
     teamMode: game.teamMode,
     serverTime: Date.now(),
     status: game.status,
+    activeQuestion,
+    buzzWinner,
   };
 }
