@@ -1,10 +1,12 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { query } from '@/lib/db';
 
 function jwtSecret() {
-  return process.env.JWT_SECRET ?? 'changeme';
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is required');
+  return secret;
 }
 
 export const HOST_COOKIE = 'jeoparty_host_token';
@@ -34,9 +36,7 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 export async function issueHostToken(hostId: number, email: string) {
-  const preToken = jwt.sign({ hostId, email, tokenId: 0 }, jwtSecret(), { expiresIn: '7d' });
-  const tokenHash = hashToken(preToken + randomUUID());
-  const result = await query<any>('INSERT INTO auth_tokens (host_id, token_hash) VALUES (?, ?)', [hostId, tokenHash]);
+  const result = await query<any>('INSERT INTO auth_tokens (host_id, token_hash) VALUES (?, ?)', [hostId, '']);
   const tokenId = result.insertId as number;
   const token = jwt.sign({ hostId, email, tokenId }, jwtSecret(), { expiresIn: '7d' });
   await query('UPDATE auth_tokens SET token_hash = ? WHERE id = ?', [hashToken(token), tokenId]);

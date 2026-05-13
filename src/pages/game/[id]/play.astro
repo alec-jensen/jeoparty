@@ -151,7 +151,7 @@ const initialPlayerId = payload?.playerId ?? '';
               inputArea.classList.remove('hidden');
               const myScore = (gameState.scores.find((s) => s.playerId === playerId)?.score || 0);
               const allValues = gameState.board.categories.flatMap((c) => c.questions.map((q) => q.value));
-              const cap = Math.max(myScore, Math.min(...allValues));
+              const cap = Math.max(myScore, Math.max(...allValues));
               inputArea.innerHTML = `<p class="small">Daily Double! Max wager: ${cap}</p><input id="ddWager" type="number" min="0" max="${cap}" /><button id="ddSend">Submit Wager</button>`;
               document.getElementById('ddSend').addEventListener('click', () => {
                 ws.send(JSON.stringify({ type: 'DAILY_DOUBLE_WAGER', wager: Number(document.getElementById('ddWager').value || 0) }));

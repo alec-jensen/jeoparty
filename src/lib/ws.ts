@@ -36,7 +36,7 @@ function clearGameTimers(gameId: string) {
 }
 
 function send(ws: WebSocket, type: string, payload: Record<string, unknown> = {}) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type, ...payload }));
+  if (ws.readyState === 1) ws.send(JSON.stringify({ type, ...payload }));
 }
 
 function broadcast(game: ActiveGame, type: string, payload: Record<string, unknown> = {}) {

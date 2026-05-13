@@ -26,11 +26,6 @@ const board = {
   title: boardRows[0]?.title ?? 'Board',
   categories: categories.map((c) => ({ ...c, questions: byCategory.get(c.id) ?? [] }))
 };
-const hostSeed = JSON.stringify({
-  board,
-  usedQuestionIds: usedRows.map((u) => u.question_id),
-  initialPlayers: players.map((p) => [p.id, { id: p.id, displayName: p.display_name, score: p.score }])
-});
 ---
 <html lang="en">
   <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Host Game</title></head>
@@ -83,7 +78,13 @@ const hostSeed = JSON.stringify({
       </section>
     </main>
 
-    <script id="host-seed" type="application/json">{hostSeed}</script>
-    <script type="module">import '/src/scripts/host-game.ts';</script>
+    <script is:inline id="host-seed" type="application/json">
+      {JSON.stringify({
+        board,
+        usedQuestionIds: usedRows.map((u) => u.question_id),
+        initialPlayers: players.map((p) => [p.id, { id: p.id, displayName: p.display_name, score: p.score }])
+      })}
+    </script>
+    <script is:inline type="module">import '/src/scripts/host-game.ts';</script>
   </body>
 </html>
