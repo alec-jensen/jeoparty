@@ -1,0 +1,247 @@
+---
+import '@/styles/global.css';
+import { PLAYER_COOKIE, verifyPlayerToken } from '@/lib/auth';
+import { query } from '@/lib/db';
+
+const gameId = String(Astro.params.id);
+const gameRows = await query<any[]>('SELECT id, status FROM games WHERE id = ?', [gameId]);
+if (!gameRows.length) return Astro.redirect('/');
+
+const token = Astro.cookies.get(PLAYER_COOKIE)?.value ?? '';
+const payload = token ? verifyPlayerToken(token) : null;
+const isJoined = !!(payload && payload.gameId === gameId);
+const initialPlayerId = payload?.playerId ?? '';
+---
+<html lang="en">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Play Jeoparty</title></head>
+  <body>
+    <main class="phone-shell">
+      <section class="card">
+        <h1>Jeoparty Buzzer</h1>
+        <p class="small">Game: {gameId}</p>
+      </section>
+
+      <section id="joinCard" class={`card grid ${isJoined ? 'hidden' : ''}`}>
+        <h2>Join Game</h2>
+        <input id="displayName" maxlength="64" placeholder="Your display name" />
+        <button id="joinBtn">Join</button>
+      </section>
+
+      <section id="app" class={`${isJoined ? '' : 'hidden'}`}>
+        <article class="card grid">
+          <h2 id="stateTitle">Lobby</h2>
+          <p id="stateText">Waiting for host to start...</p>
+          <p id="countdown" class="small"></p>
+          <button id="buzzBtn" class="buzzer hidden">BUZZ!</button>
+          <div id="inputArea" class="grid hidden"></div>
+        </article>
+
+        <article class="card">
+          <h3>Scores</h3>
+          <ul id="scores" class="scores"></ul>
+        </article>
+
+        <article class="card">
+          <h3>Board (tap to pick if it's your turn)</h3>
+          <div id="board" class="grid board-grid"></div>
+        </article>
+      </section>
+    </main>
+
+    <script is:inline define:vars={{ gameId, token, initialPlayerId }}>
+      // @ts-nocheck
+      let playerId = initialPlayerId;
+      let offset = 0;
+      let canBuzz = false;
+      let isMyTurn = false;
+      let activeQuestion = null;
+      let finalTimer = null;
+
+      const stateTitle = document.getElementById('stateTitle');
+      const stateText = document.getElementById('stateText');
+      const scoresEl = document.getElementById('scores');
+      const boardEl = document.getElementById('board');
+      const buzzBtn = document.getElementById('buzzBtn');
+      const countdownEl = document.getElementById('countdown');
+      const inputArea = document.getElementById('inputArea');
+
+      const gameState = {
+        board: null,
+        usedQuestions: new Set(),
+        scores: [],
+        currentPicker: null
+      };
+
+      function setState(title, text = '') {
+        stateTitle.textContent = title;
+        stateText.textContent = text;
+      }
+
+      function renderScores() {
+        scoresEl.innerHTML = '';
+        const sorted = [...gameState.scores].sort((a,b)=>b.score-a.score);
+        for (const s of sorted) {
+          const li = document.createElement('li');
+          li.innerHTML = `<span>${s.displayName}</span><strong>${s.score}</strong>`;
+          scoresEl.appendChild(li);
+        }
+      }
+
+      function renderBoard() {
+        boardEl.innerHTML = '';
+        if (!gameState.board) return;
+        for (const category of gameState.board.categories) {
+          const cat = document.createElement('div');
+          cat.className = 'card';
+          cat.textContent = category.title;
+          boardEl.appendChild(cat);
+          for (const q of category.questions.sort((a,b)=>a.value-b.value)) {
+            const btn = document.createElement('button');
+            btn.className = `question-cell ${gameState.usedQuestions.has(q.id) ? 'used secondary' : ''}`;
+            btn.textContent = `$${q.value}`;
+            btn.disabled = gameState.usedQuestions.has(q.id) || !isMyTurn;
+            btn.addEventListener('click', () => ws.send(JSON.stringify({ type: 'SELECT_QUESTION', questionId: q.id })));
+            boardEl.appendChild(btn);
+          }
+        }
+      }
+
+      function showFinalInput(mode) {
+        inputArea.classList.remove('hidden');
+        inputArea.innerHTML = '';
+        if (mode === 'wager') {
+          inputArea.innerHTML = `<input id="wager" type="number" min="0" placeholder="Enter wager" /><button id="submitWager">Submit Wager</button>`;
+          document.getElementById('submitWager').addEventListener('click', () => {
+            ws.send(JSON.stringify({ type: 'FINAL_WAGER', wager: Number(document.getElementById('wager').value || 0) }));
+            inputArea.classList.add('hidden');
+          });
+        }
+        if (mode === 'answer') {
+          inputArea.innerHTML = `<input id="answer" placeholder="Type final answer" /><button id="submitAnswer">Submit Answer</button>`;
+          document.getElementById('submitAnswer').addEventListener('click', () => {
+            ws.send(JSON.stringify({ type: 'FINAL_ANSWER', answer: document.getElementById('answer').value }));
+            inputArea.classList.add('hidden');
+          });
+        }
+      }
+
+      function connect() {
+        if (!token) return;
+        const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}&token=${encodeURIComponent(token)}`;
+        window.ws = new WebSocket(wsUrl);
+        ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'PING' })));
+        ws.addEventListener('message', (event) => {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'PONG') offset = msg.serverTime - Date.now();
+          if (msg.type === 'GAME_START') setState('Game On!', 'Watch for question prompts.');
+          if (msg.type === 'BOARD_STATE') {
+            gameState.board = msg.board;
+            gameState.usedQuestions = new Set(msg.usedQuestions || []);
+            gameState.scores = msg.scores || [];
+            gameState.currentPicker = msg.currentPicker;
+            isMyTurn = playerId && gameState.currentPicker === playerId;
+            renderScores();
+            renderBoard();
+          }
+          if (msg.type === 'QUESTION_OPEN') {
+            activeQuestion = msg;
+            buzzBtn.classList.add('hidden');
+            setState('Question Open', msg.questionText);
+            if (msg.isDailyDouble && isMyTurn) {
+              inputArea.classList.remove('hidden');
+              const myScore = (gameState.scores.find((s) => s.playerId === playerId)?.score || 0);
+              const allValues = gameState.board.categories.flatMap((c) => c.questions.map((q) => q.value));
+              const cap = Math.max(myScore, Math.max(...allValues));
+              inputArea.innerHTML = `<p class="small">Daily Double! Max wager: ${cap}</p><input id="ddWager" type="number" min="0" max="${cap}" /><button id="ddSend">Submit Wager</button>`;
+              document.getElementById('ddSend').addEventListener('click', () => {
+                ws.send(JSON.stringify({ type: 'DAILY_DOUBLE_WAGER', wager: Number(document.getElementById('ddWager').value || 0) }));
+                inputArea.classList.add('hidden');
+                setState('Wager Sent', 'Waiting for host confirmation...');
+              });
+            }
+          }
+          if (msg.type === 'BUZZER_OPEN') {
+            canBuzz = true;
+            buzzBtn.classList.remove('hidden');
+            const endsAt = msg.serverTime + msg.windowMs;
+            const tick = () => {
+              const left = Math.max(0, endsAt - (Date.now() + offset));
+              countdownEl.textContent = `Buzz window: ${(left / 1000).toFixed(2)}s`;
+              if (left <= 0) return;
+              requestAnimationFrame(tick);
+            };
+            tick();
+            setState('BUZZ NOW!', 'First clean buzz wins the mic.');
+          }
+          if (msg.type === 'BUZZ_WINNER') {
+            canBuzz = false;
+            buzzBtn.classList.add('hidden');
+            if (msg.playerId === playerId) {
+              setState("You're in!", 'Answer out loud!');
+            } else {
+              setState('Locked Out', `${msg.displayName} buzzed in!`);
+            }
+          }
+          if (msg.type === 'QUESTION_RESULT') {
+            if (msg.playerId === playerId && !msg.correct) {
+              setState('Wrong, try again!', 'Wait for the buzzer to reopen.');
+            }
+          }
+          if (msg.type === 'QUESTION_CLOSED') {
+            canBuzz = false;
+            buzzBtn.classList.add('hidden');
+            countdownEl.textContent = '';
+            setState('Board Time', 'Waiting for next pick.');
+            inputArea.classList.add('hidden');
+          }
+          if (msg.type === 'START_FINAL_JEOPARDY' || msg.type === 'FINAL_JEOPARDY_WAGER') {
+            setState('Final Jeopardy', 'Submit your wager!');
+            showFinalInput('wager');
+          }
+          if (msg.type === 'FINAL_JEOPARDY_START') {
+            setState('Final Jeopardy', msg.questionText);
+            showFinalInput('answer');
+            let left = 30;
+            clearInterval(finalTimer);
+            finalTimer = setInterval(() => {
+              left -= 1;
+              countdownEl.textContent = `Answer countdown: ${left}s`;
+              if (left <= 0) clearInterval(finalTimer);
+            }, 1000);
+          }
+          if (msg.type === 'GAME_OVER') {
+            setState('Game Over', 'Final scores are in!');
+            gameState.scores = msg.scores || gameState.scores;
+            renderScores();
+            const winner = [...gameState.scores].sort((a,b)=>b.score-a.score)[0];
+            if (winner) stateText.textContent = `${winner.displayName} wins with ${winner.score}!`;
+          }
+        });
+      }
+
+      document.getElementById('joinBtn').addEventListener('click', async () => {
+        const displayName = document.getElementById('displayName').value.trim();
+        if (!displayName) return;
+        const res = await fetch(`/api/games/${gameId}/join`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ displayName })
+        });
+        if (!res.ok) return alert('Join failed');
+        const json = await res.json();
+        token = json.token;
+        playerId = json.playerId;
+        document.getElementById('joinCard').classList.add('hidden');
+        document.getElementById('app').classList.remove('hidden');
+        connect();
+      });
+
+      buzzBtn.addEventListener('click', () => {
+        if (!canBuzz) return;
+        ws.send(JSON.stringify({ type: 'BUZZ', clientTime: Date.now() + offset }));
+      });
+
+      if (token) connect();
+    </script>
+  </body>
+</html>

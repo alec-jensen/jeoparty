@@ -1,0 +1,57 @@
+---
+import '@/styles/global.css';
+const host = Astro.locals.host;
+if (host) return Astro.redirect('/dashboard');
+---
+<html lang="en">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Jeoparty</title></head>
+  <body>
+    <main class="page grid" style="max-width:700px; padding-top:2rem;">
+      <section class="card">
+        <h1>JEOPARTY ⚡</h1>
+        <p class="small">Jackbox energy. Jeopardy brains. Your couch, your rules.</p>
+      </section>
+      <section class="card grid" style="grid-template-columns:1fr 1fr;">
+        <form id="loginForm" class="grid">
+          <h2>Host Login</h2>
+          <input name="email" type="email" placeholder="host@email.com" required />
+          <input name="password" type="password" placeholder="password" required />
+          <button type="submit">Login</button>
+        </form>
+        <form id="registerForm" class="grid">
+          <h2>Create Host</h2>
+          <input name="email" type="email" placeholder="host@email.com" required />
+          <input name="password" type="password" placeholder="min 6 chars" minlength="6" required />
+          <button type="submit">Register</button>
+        </form>
+      </section>
+      <p id="msg"></p>
+    </main>
+
+    <script>
+      // @ts-nocheck
+      const msg = document.getElementById('msg');
+      async function wire(formId, endpoint) {
+        const form = document.getElementById(formId);
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const fd = new FormData(form);
+          const body = Object.fromEntries(fd.entries());
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (res.ok) {
+            location.href = '/dashboard';
+            return;
+          }
+          const json = await res.json().catch(() => ({}));
+          msg.textContent = json.error || 'Request failed';
+        });
+      }
+      wire('loginForm', '/api/auth/login');
+      wire('registerForm', '/api/auth/register');
+    </script>
+  </body>
+</html>
