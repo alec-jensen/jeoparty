@@ -1,0 +1,89 @@
+---
+import '@/styles/global.css';
+import { HOST_COOKIE } from '@/lib/auth';
+import { query } from '@/lib/db';
+
+if (!Astro.locals.host) return Astro.redirect('/');
+const gameId = String(Astro.params.id);
+const rows = await query<any[]>('SELECT id, board_id, host_id, status FROM games WHERE id = ?', [gameId]);
+if (!rows.length || rows[0].host_id !== Astro.locals.host.hostId) return Astro.redirect('/dashboard');
+const game = rows[0];
+const hostToken = Astro.cookies.get(HOST_COOKIE)?.value ?? '';
+const boardRows = await query<any[]>('SELECT id, title FROM boards WHERE id = ?', [game.board_id]);
+const categories = await query<any[]>('SELECT id, title, position FROM categories WHERE board_id = ? ORDER BY position', [game.board_id]);
+const questions = await query<any[]>('SELECT id, category_id, value, is_daily_double, question, answer FROM questions WHERE category_id IN (?)', [
+  categories.length ? categories.map((c) => c.id) : [0]
+]);
+const usedRows = await query<any[]>('SELECT question_id FROM used_questions WHERE game_id = ?', [gameId]);
+const players = await query<any[]>('SELECT id, display_name, score FROM players WHERE game_id = ?', [gameId]);
+const byCategory = new Map<number, any[]>();
+for (const q of questions) {
+  const list = byCategory.get(q.category_id) ?? [];
+  list.push(q);
+  byCategory.set(q.category_id, list);
+}
+const board = {
+  title: boardRows[0]?.title ?? 'Board',
+  categories: categories.map((c) => ({ ...c, questions: byCategory.get(c.id) ?? [] }))
+};
+const hostSeed = JSON.stringify({
+  board,
+  usedQuestionIds: usedRows.map((u) => u.question_id),
+  initialPlayers: players.map((p) => [p.id, { id: p.id, displayName: p.display_name, score: p.score }])
+});
+---
+<html lang="en">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Host Game</title></head>
+  <body data-game-id={gameId} data-host-token={hostToken}>
+    <main class="page grid host-layout">
+      <section class="grid" style="align-content:start;">
+        <article class="card">
+          <h1>{board.title}</h1>
+          <p class="small">Game ID: {gameId}</p>
+          <canvas id="qr"></canvas>
+          <p><a id="playLink" href={`/game/${gameId}/play`} target="_blank">Player join link</a></p>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+            <button id="startGame">Start Game</button>
+            <button id="startFinal" class="secondary">Start Final Jeopardy</button>
+            <button id="endGame" class="secondary">End Game</button>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>Board</h2>
+          <div id="board" class="grid board-grid"></div>
+        </article>
+      </section>
+
+      <section class="grid" style="align-content:start;">
+        <article class="card">
+          <h2>Players</h2>
+          <ul id="players" class="scores"></ul>
+        </article>
+
+        <article class="card grid">
+          <h2>Active Question</h2>
+          <p id="questionText" class="small">No question open.</p>
+          <p id="answerText" class="hidden"></p>
+          <button id="toggleAnswer" class="secondary">Reveal Answer</button>
+          <div id="judgeButtons" class="grid"></div>
+        </article>
+
+        <article class="card grid">
+          <h2>Manual Score</h2>
+          <select id="scorePlayer"></select>
+          <input id="scoreValue" type="number" />
+          <button id="applyScore" class="secondary">Apply</button>
+        </article>
+
+        <article class="card grid">
+          <h2>Final Jeopardy Judging</h2>
+          <div id="finalList" class="grid"></div>
+        </article>
+      </section>
+    </main>
+
+    <script id="host-seed" type="application/json">{hostSeed}</script>
+    <script type="module">import '/src/scripts/host-game.ts';</script>
+  </body>
+</html>

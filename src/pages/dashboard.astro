@@ -1,0 +1,63 @@
+---
+import '@/styles/global.css';
+import { query } from '@/lib/db';
+
+if (!Astro.locals.host) return Astro.redirect('/');
+const boards = await query<any[]>('SELECT id, title, updated_at FROM boards WHERE host_id = ? ORDER BY updated_at DESC', [
+  Astro.locals.host.hostId
+]);
+---
+<html lang="en">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Dashboard</title></head>
+  <body>
+    <main class="page grid">
+      <section class="card" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
+        <div>
+          <h1>Host Dashboard</h1>
+          <p class="small">Welcome, {Astro.locals.host.email}</p>
+        </div>
+        <div style="display:flex;gap:.5rem;">
+          <a href="/boards/new"><button>Create Board</button></a>
+          <button id="logout" class="secondary">Logout</button>
+        </div>
+      </section>
+
+      <section class="grid">
+        {boards.map((board) => (
+          <article class="card" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
+            <div>
+              <h3>{board.title}</h3>
+              <p class="small">Updated: {new Date(board.updated_at).toLocaleString()}</p>
+            </div>
+            <div style="display:flex;gap:.5rem;">
+              <a href={`/boards/${board.id}`}><button class="secondary">Edit</button></a>
+              <button class="start" data-board-id={board.id}>Start Game</button>
+            </div>
+          </article>
+        ))}
+        {!boards.length && <p class="card">No boards yet. Create one and start your first game.</p>}
+      </section>
+    </main>
+
+    <script>
+      // @ts-nocheck
+      document.getElementById('logout').addEventListener('click', async () => {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        location.href = '/';
+      });
+      for (const btn of document.querySelectorAll('.start')) {
+        btn.addEventListener('click', async () => {
+          const boardId = Number(btn.dataset.boardId);
+          const res = await fetch('/api/games/create', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ boardId })
+          });
+          if (!res.ok) return alert('Could not create game');
+          const json = await res.json();
+          location.href = `/game/${json.id}`;
+        });
+      }
+    </script>
+  </body>
+</html>

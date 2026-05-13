@@ -1,0 +1,43 @@
+{
+  "name": "jeoparty",
+  "version": "1.0.0",
+  "description": "Jeopardy and Jackbox mix",
+  "main": "index.js",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "start": "tsx server.mjs",
+    "check": "astro check"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alec-jensen/jeoparty.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/alec-jensen/jeoparty/issues"
+  },
+  "homepage": "https://github.com/alec-jensen/jeoparty#readme",
+  "dependencies": {
+    "@astrojs/node": "^10.1.0",
+    "astro": "^6.3.1",
+    "bcrypt": "^6.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "mysql2": "^3.22.3",
+    "qrcode": "^1.5.4",
+    "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "@types/bcrypt": "^6.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^25.7.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

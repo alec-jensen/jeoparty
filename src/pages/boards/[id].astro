@@ -1,0 +1,162 @@
+---
+import '@/styles/global.css';
+import { query } from '@/lib/db';
+
+if (!Astro.locals.host) return Astro.redirect('/');
+const boardId = Number(Astro.params.id);
+const boards = await query<any[]>('SELECT id, host_id, title FROM boards WHERE id = ?', [boardId]);
+if (!boards.length || boards[0].host_id !== Astro.locals.host.hostId) return Astro.redirect('/dashboard');
+const boardTitle = boards[0].title;
+---
+<html lang="en">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Edit Board</title></head>
+  <body>
+    <main class="page grid">
+      <section class="card" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
+        <h1>Editing: <span id="boardName">{boardTitle}</span></h1>
+        <div style="display:flex;gap:.5rem;">
+          <button id="save">Save Board</button>
+          <a href="/dashboard"><button class="secondary">Back</button></a>
+        </div>
+      </section>
+
+      <section class="card grid">
+        <label>Board title <input id="title" /></label>
+        <button id="addCategory" class="secondary">+ Add Category</button>
+      </section>
+
+      <section id="categories" class="grid"></section>
+      <p id="status" class="small"></p>
+    </main>
+
+    <template id="categoryTpl">
+      <article class="card grid category">
+        <div style="display:flex;gap:.5rem;align-items:center;">
+          <input class="cat-title" placeholder="Category title" />
+          <button class="remove-category secondary" type="button">Remove</button>
+        </div>
+        <div class="questions grid"></div>
+        <button class="add-question secondary" type="button">+ Add Question</button>
+      </article>
+    </template>
+
+    <template id="questionTpl">
+      <div class="card question" style="background:#1f103f;">
+        <div class="grid" style="grid-template-columns:1fr auto;align-items:center;">
+          <label>Value <input class="q-value" type="number" min="0" step="100" /></label>
+          <label style="display:flex;gap:.35rem;align-items:center;">Daily Double <input class="q-dd" type="checkbox" style="width:auto;" /></label>
+        </div>
+        <label>Question <textarea class="q-question"></textarea></label>
+        <label>Answer <textarea class="q-answer"></textarea></label>
+        <button class="remove-question secondary" type="button">Remove Question</button>
+      </div>
+    </template>
+
+    <script>
+      // @ts-nocheck
+      const boardId = Number(location.pathname.split('/').pop());
+      const categoriesEl = document.getElementById('categories');
+      const categoryTpl = document.getElementById('categoryTpl');
+      const questionTpl = document.getElementById('questionTpl');
+      const statusEl = document.getElementById('status');
+      let dirty = false;
+
+      function setDirty(v = true) {
+        dirty = v;
+        statusEl.textContent = dirty ? 'Unsaved changes' : 'All changes saved';
+      }
+      window.addEventListener('beforeunload', (e) => {
+        if (!dirty) return;
+        e.preventDefault();
+        e.returnValue = '';
+      });
+
+      function addQuestion(container, data = {}) {
+        const node = questionTpl.content.firstElementChild.cloneNode(true);
+        if (data.id) node.dataset.id = data.id;
+        node.querySelector('.q-value').value = data.value ?? 200;
+        node.querySelector('.q-question').value = data.question ?? '';
+        node.querySelector('.q-answer').value = data.answer ?? '';
+        node.querySelector('.q-dd').checked = !!data.isDailyDouble;
+        node.querySelector('.remove-question').addEventListener('click', () => {
+          node.remove();
+          setDirty();
+        });
+        node.querySelectorAll('input,textarea').forEach((el) => el.addEventListener('input', () => setDirty()));
+        container.appendChild(node);
+      }
+
+      function addCategory(data = {}) {
+        const node = categoryTpl.content.firstElementChild.cloneNode(true);
+        if (data.id) node.dataset.id = data.id;
+        node.querySelector('.cat-title').value = data.title ?? '';
+        const questionsContainer = node.querySelector('.questions');
+        (data.questions ?? []).forEach((q) => addQuestion(questionsContainer, q));
+        node.querySelector('.add-question').addEventListener('click', () => {
+          addQuestion(questionsContainer, { value: 200 });
+          setDirty();
+        });
+        node.querySelector('.remove-category').addEventListener('click', () => {
+          node.remove();
+          setDirty();
+        });
+        node.querySelectorAll('input,textarea').forEach((el) => el.addEventListener('input', () => setDirty()));
+        categoriesEl.appendChild(node);
+      }
+
+      function readBoard() {
+        const categories = Array.from(document.querySelectorAll('.category')).map((catNode, ci) => ({
+          id: catNode.dataset.id ? Number(catNode.dataset.id) : undefined,
+          title: catNode.querySelector('.cat-title').value,
+          position: ci,
+          questions: Array.from(catNode.querySelectorAll('.question')).map((qNode, qi) => ({
+            id: qNode.dataset.id ? Number(qNode.dataset.id) : undefined,
+            value: Number(qNode.querySelector('.q-value').value || 0),
+            question: qNode.querySelector('.q-question').value,
+            answer: qNode.querySelector('.q-answer').value,
+            isDailyDouble: qNode.querySelector('.q-dd').checked,
+            position: qi
+          }))
+        }));
+
+        return {
+          title: document.getElementById('title').value,
+          categories
+        };
+      }
+
+      async function loadBoard() {
+        const res = await fetch(`/api/boards/${boardId}`);
+        if (!res.ok) return;
+        const board = await res.json();
+        document.getElementById('title').value = board.title;
+        document.getElementById('boardName').textContent = board.title;
+        categoriesEl.innerHTML = '';
+        board.categories.forEach((cat) => addCategory(cat));
+        setDirty(false);
+      }
+
+      document.getElementById('addCategory').addEventListener('click', () => {
+        addCategory({ title: 'New Category', questions: [] });
+        setDirty();
+      });
+
+      document.getElementById('title').addEventListener('input', () => {
+        document.getElementById('boardName').textContent = document.getElementById('title').value;
+        setDirty();
+      });
+
+      document.getElementById('save').addEventListener('click', async () => {
+        const res = await fetch(`/api/boards/${boardId}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(readBoard())
+        });
+        if (!res.ok) return alert('Save failed');
+        setDirty(false);
+      });
+
+      loadBoard();
+    </script>
+  </body>
+</html>
