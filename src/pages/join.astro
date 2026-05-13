@@ -11,7 +11,7 @@ const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[
 </head>
 <body>
   <main style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:1.5rem;">
-    <div class="logo" style="font-family:'Fredoka',sans-serif; font-size:2.5rem; font-weight:700; background:linear-gradient(135deg,#f5c518,#ff4fa3); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:1.5rem; text-align:center;">JEOPARTY</div>
+    <div class="logo" style="font-family:'Anton',sans-serif; font-size:2.5rem; font-weight:700; background:linear-gradient(135deg,#FFC83D,#FF3D8E); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:1.5rem; text-align:center;">JEOPARTY</div>
 
     <section id="joinCard" class="card grid" style="width:100%; max-width:400px;">
       <h2 style="text-align:center;">Join a Game</h2>
@@ -20,7 +20,7 @@ const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[
         <label>
           <span class="small">Game Code</span>
           <input id="gameCode" maxlength="4" placeholder="ABCD" value={code}
-            style="text-transform:uppercase; font-family:'Fredoka',sans-serif; font-size:2rem; text-align:center; letter-spacing:0.3em; font-weight:700;" />
+            style="text-transform:uppercase; font-family:'Anton',sans-serif; font-size:2rem; text-align:center; letter-spacing:0.3em; font-weight:700;" />
         </label>
         <label>
           <span class="small">Your Name</span>
@@ -43,7 +43,7 @@ const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[
       <label>
         <span class="small">Game Code</span>
         <input id="hostGameCode" maxlength="4" placeholder="ABCD" value={code}
-          style="text-transform:uppercase; font-family:'Fredoka',sans-serif; font-size:2rem; text-align:center; letter-spacing:0.3em; font-weight:700;" />
+          style="text-transform:uppercase; font-family:'Anton',sans-serif; font-size:2rem; text-align:center; letter-spacing:0.3em; font-weight:700;" />
       </label>
       <button id="hostJoinBtn" class="accent">Open Host Controls</button>
       <p id="hostMsg" class="small" style="text-align:center; min-height:1.2em;"></p>

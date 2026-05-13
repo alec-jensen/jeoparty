@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { db, schema } from '@/lib/db';
+import { db, schema, insertReturningId } from '@/lib/db';
 import { eq, inArray, and } from 'drizzle-orm';
 
 async function loadFullBoard(boardId: number) {
@@ -72,8 +72,7 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
     if (roundId) {
       await db.update(schema.rounds).set({ title: String(round.title || 'Round'), position: ri }).where(and(eq(schema.rounds.id, roundId), eq(schema.rounds.boardId, boardId)));
     } else {
-      const [{ id }] = await db.insert(schema.rounds).values({ boardId, title: String(round.title || 'Round'), position: ri }).$returningId();
-      roundId = id;
+      roundId = await insertReturningId(schema.rounds, { boardId, title: String(round.title || 'Round'), position: ri });
     }
 
     const incomingCats: any[] = Array.isArray(round.categories) ? round.categories : [];
@@ -89,8 +88,7 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
       if (catId) {
         await db.update(schema.categories).set({ title: String(cat.title || 'Category'), position: ci }).where(eq(schema.categories.id, catId));
       } else {
-        const [{ id }] = await db.insert(schema.categories).values({ roundId, title: String(cat.title || 'Category'), position: ci }).$returningId();
-        catId = id;
+        catId = await insertReturningId(schema.categories, { roundId, title: String(cat.title || 'Category'), position: ci });
       }
 
       const incomingQs: any[] = Array.isArray(cat.questions) ? cat.questions : [];
@@ -117,7 +115,8 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
     }
   }
 
-  return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  const updated = await loadFullBoard(boardId);
+  return new Response(JSON.stringify(updated), { status: 200 });
 };
 
 export const DELETE: APIRoute = async ({ params, locals }) => {

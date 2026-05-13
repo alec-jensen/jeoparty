@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { HOST_COOKIE, hashPassword, issueHostToken } from '@/lib/auth';
-import { db, schema } from '@/lib/db';
+import { db, schema, insertReturningId } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
@@ -18,9 +18,10 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   if (existing.length) return new Response(JSON.stringify({ error: 'Email already registered.' }), { status: 409 });
 
   const passwordHash = await hashPassword(String(password));
-  const [{ id: hostId }] = await db.insert(schema.hosts)
-    .values({ email: String(email).toLowerCase().trim(), passwordHash })
-    .$returningId();
+  const hostId = await insertReturningId(schema.hosts, { 
+    email: String(email).toLowerCase().trim(), 
+    passwordHash 
+  });
 
   const token = await issueHostToken(hostId, String(email).toLowerCase().trim());
   cookies.set(HOST_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 });

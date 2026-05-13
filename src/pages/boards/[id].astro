@@ -15,190 +15,1095 @@ const boardTitle = boards[0].title;
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width" />
   <title>Edit Board — {boardTitle}</title>
-  <style>
-    .round-block { border: 2px solid var(--border); border-radius: 16px; padding: 1rem; background: rgba(14,8,40,.5); }
-    .round-header { display:flex; justify-content:space-between; align-items:center; gap:.75rem; margin-bottom:.75rem; }
-    .question-card { background: rgba(10,5,30,.7); border: 1px solid var(--border); border-radius: 12px; padding: .85rem; }
-    label span { display:block; font-size:.82rem; color:var(--muted); margin-bottom:.2rem; }
+  <style is:global>
+    html, body { height: 100%; overflow: hidden; margin: 0; }
+    body { display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font-family: 'Space Grotesk', sans-serif; }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    #hdr {
+      display: flex; align-items: center; height: 56px;
+      padding: 0 20px; gap: 16px; flex-shrink: 0;
+      background: var(--bg2); border-bottom: 1px solid var(--line);
+    }
+    #hdr-left  { display: flex; align-items: center; gap: 12px; }
+    #hdr-mid   { display: flex; align-items: center; gap: 10px; flex: 1; justify-content: center; }
+    #hdr-right { display: flex; align-items: center; gap: 8px; }
+
+    .back-btn {
+      display: flex; align-items: center; gap: 5px;
+      padding: 6px 11px; border-radius: 8px; cursor: pointer;
+      border: 1.5px solid var(--line); background: transparent;
+      color: var(--dim); font-size: 11px; letter-spacing: 0.12em; font-weight: 700;
+      transition: border-color .15s, color .15s; text-decoration: none;
+    }
+    .back-btn:hover { border-color: var(--line2); color: var(--ink); text-decoration: none; }
+    .brand { font-family: 'Anton', sans-serif; font-size: 22px; color: var(--gold); letter-spacing: .04em; line-height: 1; }
+    .editor-badge { font-size: 10px; color: var(--dim); letter-spacing: .22em; padding: 3px 7px; background: var(--bg3); border-radius: 4px; }
+
+    #titleInput {
+      font-family: 'Anton', sans-serif; font-size: 18px; letter-spacing: .04em;
+      color: var(--ink); background: transparent; border: none; outline: none;
+      text-align: center; max-width: 420px; width: 100%;
+      transition: color .15s;
+    }
+    #titleInput:focus { color: var(--gold); }
+
+    .save-row { display: flex; align-items: center; gap: 6px; }
+    .save-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mint); flex-shrink: 0; }
+    .save-dot.dirty { background: var(--gold); animation: jp-pulse 1.5s ease-in-out infinite; }
+    .save-dot.saving { background: var(--dim); }
+    .save-dot.error { background: var(--red); }
+    #saveLabel { font-size: 11px; color: var(--dim); letter-spacing: .1em; white-space: nowrap; }
+
+    .ghost-btn {
+      padding: 7px 14px; border-radius: 8px;
+      border: 1.5px solid var(--line); background: transparent;
+      color: var(--ink); font-size: 12px; font-weight: 600; letter-spacing: .12em;
+      cursor: pointer; transition: border-color .15s; box-shadow: none;
+    }
+    .ghost-btn:hover { border-color: var(--line2); box-shadow: none; transform: none; }
+
+    .start-btn {
+      display: flex; align-items: center; gap: 7px;
+      padding: 8px 16px; border-radius: 8px;
+      background: var(--gold); border: none;
+      color: var(--bg); font-family: 'Anton', sans-serif;
+      font-size: 13px; letter-spacing: .1em; cursor: pointer;
+      transition: filter .15s; box-shadow: none;
+    }
+    .start-btn:hover { filter: brightness(1.1); box-shadow: none; transform: none; }
+
+    /* ── Round tabs ─────────────────────────────────────────── */
+    #tabs {
+      display: flex; gap: 2px; padding: 10px 20px 0;
+      flex-shrink: 0; background: var(--bg);
+      border-bottom: 1px solid var(--line);
+    }
+    .tab-item {
+      display: flex; align-items: center;
+      background: transparent; border-radius: 8px 8px 0 0;
+      border: 1.5px solid transparent; margin-bottom: -1px;
+      transition: background .15s, border-color .15s;
+    }
+    .tab-item.active {
+      background: var(--bg2); border-color: var(--line2); border-bottom-color: var(--bg2);
+    }
+    .tab-btn {
+      padding: 8px 12px 8px 16px; border: none; background: transparent;
+      color: var(--dim); font-size: 11px; font-weight: 700; letter-spacing: .12em;
+      cursor: pointer; transition: color .15s; white-space: nowrap;
+      box-shadow: none;
+    }
+    .tab-btn:hover { color: var(--ink); box-shadow: none; transform: none; }
+    .tab-item.active .tab-btn { color: var(--gold); }
+
+    .tab-del {
+      padding: 8px 12px 8px 4px; border: none; background: transparent;
+      color: var(--dim); font-size: 14px; cursor: pointer;
+      transition: color .15s; box-shadow: none;
+    }
+    .tab-del:hover { color: var(--ink); transform: none; box-shadow: none; }
+
+    .tab-add {
+      padding: 8px 13px; border-radius: 8px 8px 0 0;
+      border: 1.5px solid var(--line); background: transparent;
+      color: var(--dim); font-size: 16px; cursor: pointer;
+      transition: color .15s, border-color .15s; margin-bottom: -1px;
+      box-shadow: none;
+    }
+    .tab-add:hover { color: var(--ink); border-color: var(--line2); box-shadow: none; transform: none; }
+
+    /* ── Main split ─────────────────────────────────────────── */
+    #main { display: flex; flex: 1; min-height: 0; }
+
+    /* ── Grid area ──────────────────────────────────────────── */
+    #grid-wrap { flex: 1; overflow: auto; padding: 16px; }
+    #grid {
+      display: flex; gap: 6px; align-items: flex-start;
+      min-width: min-content;
+    }
+
+    .grid-col { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 120px; }
+    .val-col { width: 80px; flex: 0 0 80px; min-width: 80px; }
+    .add-cat-col { width: 100px; flex: 0 0 100px; min-width: 100px; }
+
+    .cat-hdr {
+      background: linear-gradient(180deg, var(--violet) 0%, #5A3FE0 100%);
+      border-radius: 8px; height: 80px; position: relative;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: none;
+      overflow: hidden; cursor: grab;
+      margin-bottom: 6px;
+    }
+    .cat-hdr.dragging { opacity: 0.1; }
+    .cat-hdr.drag-over { background: rgba(255,255,255,0.1); }
+    .cat-hdr-text {
+      font-family: 'Anton', sans-serif; font-size: 14px; letter-spacing: .04em;
+      text-align: center; white-space: pre-line; color: #fff; padding: 10px 28px 10px 10px;
+      line-height: 1.1; cursor: pointer; width: 100%;
+    }
+    .cat-hdr-edit {
+      position: absolute; top: 6px; right: 6px;
+      font-size: 9px; color: rgba(255,255,255,.45); letter-spacing: .18em;
+      background: transparent; border: none; cursor: pointer; padding: 2px 4px;
+      box-shadow: none;
+    }
+    .cat-hdr-edit:hover { color: #fff; box-shadow: none; transform: none; }
+
+    .cat-hdr-del {
+      position: absolute; top: 6px; left: 6px;
+      font-size: 14px; color: var(--dim);
+      background: transparent; border: none; cursor: pointer; padding: 2px 4px;
+      box-shadow: none; line-height: 1;
+    }
+    .cat-hdr-del:hover { color: var(--ink); transform: none; box-shadow: none; }
+    .cat-hdr-input {
+      background: transparent; border: none; outline: none;
+      font-family: 'Anton', sans-serif; font-size: 13px; letter-spacing: .04em;
+      color: #fff; text-align: center; width: 100%; padding: 10px;
+      resize: none; min-height: 60px;
+    }
+
+    .add-cat-col {
+      display: flex; align-items: flex-start;
+    }
+    .add-cat-btn {
+      width: 100%; min-height: 80px; border-radius: 8px;
+      border: 1.5px dashed var(--line2); background: transparent;
+      color: var(--dim); font-size: 11px; letter-spacing: .14em; font-weight: 700;
+      cursor: pointer; transition: border-color .15s, color .15s;
+      box-shadow: none;
+    }
+    .add-cat-btn:hover { border-color: var(--dim); color: var(--ink); box-shadow: none; transform: none; }
+    .add-cat-cell { /* empty spacer in question rows for the +col */ }
+
+    .val-cell {
+      background: rgba(255, 200, 61, 0.1); border: 1.5px solid rgba(255, 200, 61, 0.3);
+      border-radius: 8px; height: 80px; position: relative;
+      display: flex; align-items: center; justify-content: center;
+      cursor: grab; margin-bottom: 6px; overflow: hidden;
+      transition: border-color .15s, background .15s;
+    }
+    .val-cell:hover { border-color: var(--gold); background: rgba(255, 200, 61, 0.15); }
+    .val-cell.dragging { opacity: 0.1; }
+    .val-cell.drag-over { background: rgba(255,200,61,0.25); border-color: var(--gold); }
+
+    .val-cell-text {
+      font-family: 'Anton', sans-serif; font-size: 20px; letter-spacing: .04em;
+      text-align: center; color: var(--gold); line-height: 1;
+    }
+
+    .val-cell-edit, .val-cell-del {
+      position: absolute; font-size: 9px; font-weight: 700; color: var(--dim);
+      background: transparent; border: none; cursor: pointer; padding: 8px;
+      transition: color .15s;
+    }
+    .val-cell-edit { top: 0; right: 0; letter-spacing: .12em; }
+    .val-cell-del { top: 0; left: 0; font-size: 14px; }
+    .val-cell-edit:hover { color: #000; }
+    .val-cell-del:hover { color: var(--red); }
+    .val-cell-input {
+      background: transparent; border: none; outline: none;
+      font-family: 'Anton', sans-serif; font-size: 16px; color: var(--bg);
+      text-align: center; width: 100%; padding: 5px;
+    }
+
+    .q-cell {
+      background: var(--bg2); border: 1.5px solid var(--line);
+      border-radius: 8px; padding: 10px 12px; cursor: pointer;
+      height: 80px; margin-bottom: 6px;
+      display: flex; flex-direction: column; gap: 5px;
+      position: relative; transition: border-color .12s;
+    }
+    .q-cell:hover { border-color: var(--line2); }
+    .q-cell.active { border-color: var(--gold); box-shadow: none; }
+    .q-cell.dragging { opacity: 0.5; border-style: dashed; }
+    .q-cell.drag-over { border-color: var(--gold); background: var(--bg3); }
+
+    .q-val { font-family: 'Anton', sans-serif; font-size: 15px; color: var(--gold); line-height: 1; }
+    .q-prev { font-size: 12px; color: var(--dim); line-height: 1.35; overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+    .badge {
+      position: absolute; top: 6px; right: 6px;
+      font-size: 9px; letter-spacing: .12em; padding: 2px 6px;
+      border-radius: 4px; font-weight: 700; white-space: nowrap;
+    }
+    .badge-editing { background: var(--gold); color: var(--bg); }
+    .badge-dd { background: rgba(255,200,61,.12); color: var(--gold); border: 1px solid rgba(255,200,61,.35); }
+
+    /* ── Sidebar ────────────────────────────────────────────── */
+    #sidebar {
+      width: 360px; flex-shrink: 0;
+      border-left: 1px solid var(--line);
+      background: var(--bg2);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #sb-empty {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      font-size: 13px; color: var(--dim2); text-align: center; padding: 20px;
+    }
+    #sb-content { display: none; flex: 1; flex-direction: column; min-height: 0; }
+    #sb-content.visible { display: flex; }
+
+    .sb-hdr { padding: 16px 20px 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+    .sb-editing-lbl { font-size: 10px; color: var(--dim); letter-spacing: .22em; font-weight: 600; margin-bottom: 8px; }
+    .sb-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .sb-cat { font-family: 'Anton', sans-serif; font-size: 18px; letter-spacing: .04em; color: var(--ink); }
+    .sb-val { font-family: 'Anton', sans-serif; font-size: 18px; color: var(--gold); }
+
+    .sb-tabs { display: flex; gap: 6px; padding: 12px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+    .sb-tab {
+      padding: 6px 12px; background: transparent; border: 1px solid transparent;
+      color: var(--dim); font-family: 'Anton', sans-serif; font-size: 11px; letter-spacing: .14em;
+      cursor: pointer; border-radius: 6px; transition: color .15s;
+    }
+    .sb-tab:hover { color: var(--ink); }
+    .sb-tab.active { background: var(--bg3); color: var(--gold); border-color: var(--line2); }
+
+    .sb-body { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+    .field-lbl { font-size: 10px; color: var(--dim); letter-spacing: .22em; font-weight: 600; margin-bottom: 6px; }
+
+    .clue-ta {
+      width: 100%; background: var(--bg); border: 2px solid var(--gold);
+      border-radius: 10px; color: var(--ink);
+      font-family: 'Space Grotesk', sans-serif; font-size: 14px; line-height: 1.5;
+      padding: 12px 14px; resize: none; outline: none; min-height: 110px;
+    }
+    .clue-ta:focus { box-shadow: 0 0 0 3px rgba(255,200,61,.1); }
+
+    .answer-in {
+      width: 100%; background: var(--bg); border: 2px solid var(--line);
+      border-radius: 10px; color: var(--mint);
+      font-family: 'Anton', sans-serif; font-size: 16px; letter-spacing: .04em;
+      padding: 12px 14px; outline: none;
+    }
+    .answer-in:focus { border-color: var(--mint); box-shadow: 0 0 0 3px rgba(94,235,193,.1); }
+    .aliases { font-size: 11px; color: var(--dim); margin-top: 5px; }
+
+    .opt-lbl { font-size: 10px; color: var(--dim); letter-spacing: .22em; font-weight: 600; margin-bottom: 8px; }
+    .opt-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; background: var(--bg); border-radius: 10px;
+      border: 1px solid var(--line); margin-bottom: 6px;
+    }
+    .opt-row-lbl { font-size: 13px; color: var(--ink); }
+
+    .toggle {
+      width: 40px; height: 22px; border-radius: 999px; background: var(--bg3);
+      border: 1px solid var(--line2); cursor: pointer; position: relative;
+      transition: background .2s;
+    }
+    .toggle::after {
+      content: ''; position: absolute; top: 3px; left: 3px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--dim); transition: transform .2s, background .2s;
+    }
+    .toggle.on { background: #3A6FDF; border-color: #5B8DEF; }
+    .toggle.on::after { transform: translateX(18px); background: #fff; }
+
+    .val-in {
+      width: 80px; text-align: right; background: var(--bg);
+      border: 1px solid var(--line); border-radius: 6px;
+      color: var(--ink); font-family: 'Space Grotesk', sans-serif;
+      font-size: 13px; padding: 5px 9px; outline: none;
+    }
+    .val-in:focus { border-color: var(--gold); }
+
+    .sb-footer {
+      display: flex; gap: 10px; padding: 14px 20px;
+      border-top: 1px solid var(--line); flex-shrink: 0;
+    }
+    .del-btn {
+      flex: 1; padding: 12px 0; border-radius: 8px;
+      border: 1.5px solid var(--red); background: transparent;
+      color: var(--red); font-family: 'Anton', sans-serif;
+      font-size: 12px; letter-spacing: .12em; cursor: pointer;
+      transition: background .15s;
+    }
+    .del-btn:hover { background: rgba(255,90,90,.08); }
+    .next-btn {
+      flex: 2; padding: 12px 0; border-radius: 8px;
+      background: var(--gold); border: none;
+      color: var(--bg); font-family: 'Anton', sans-serif;
+      font-size: 13px; letter-spacing: .12em; cursor: pointer;
+      transition: filter .15s;
+    }
+    .next-btn:hover { filter: brightness(1.1); }
   </style>
 </head>
 <body>
-  <main class="page grid" style="max-width:960px;">
-    <div class="flex-between card">
-      <h1 style="font-size:1.6rem;">Editing: <span id="boardName">{boardTitle}</span></h1>
-      <div class="flex" style="flex-wrap:wrap; gap:.5rem;">
-        <button id="addRound" class="secondary">+ Add Round</button>
-        <button id="save" class="accent">Save Board</button>
-        <a href="/dashboard"><button class="secondary">← Back</button></a>
-      </div>
+
+<!-- ── Header ──────────────────────────────────────────────────────────── -->
+<div id="hdr">
+  <div id="hdr-left">
+    <a href="/dashboard" class="back-btn">← BOARDS</a>
+    <span class="brand">JEOPARTY</span>
+    <span class="editor-badge">EDITOR</span>
+  </div>
+  <div id="hdr-mid">
+    <input id="titleInput" value={boardTitle} placeholder="Board title" autocomplete="off" />
+    <div class="save-row">
+      <div id="saveDot" class="save-dot"></div>
+      <span id="saveLabel">AUTOSAVED</span>
     </div>
+  </div>
+  <div id="hdr-right">
+    <button class="ghost-btn" id="shareBtn">SHARE</button>
+    <button class="start-btn" id="startBtn">▶ START GAME</button>
+  </div>
+</div>
 
-    <div class="card">
-      <label><span>Board Title</span><input id="title" value={boardTitle} style="font-size:1.05rem;" /></label>
-    </div>
+<!-- ── Tabs ─────────────────────────────────────────────────────────────── -->
+<div id="tabs"></div>
 
-    <div id="rounds" class="grid" style="gap:1.25rem;"></div>
-    <p id="status" class="small" style="text-align:center; min-height:1.2em;"></p>
-  </main>
+<!-- ── Main ─────────────────────────────────────────────────────────────── -->
+<div id="main">
+  <div id="grid-wrap">
+    <div id="grid"></div>
+  </div>
 
-  <!-- Templates -->
-  <template id="roundTpl">
-    <div class="round-block round">
-      <div class="round-header">
-        <input class="round-title" placeholder="Round title" style="font-size:1.1rem; font-family:'Fredoka',sans-serif; font-weight:600; max-width:260px;" />
-        <div class="flex" style="gap:.5rem; flex-wrap:wrap;">
-          <button class="add-category secondary" type="button" style="font-size:.85rem;">+ Category</button>
-          <button class="remove-round secondary" type="button" style="font-size:.85rem; color:var(--bad);">Remove Round</button>
+  <div id="sidebar">
+    <div id="sb-empty">Click any clue to edit it</div>
+    <div id="sb-content">
+
+      <div class="sb-hdr">
+        <div class="sb-editing-lbl">EDITING</div>
+        <div class="sb-title">
+          <span id="sbCat" class="sb-cat"></span>
+          <span id="sbVal" class="sb-val"></span>
         </div>
       </div>
-      <div class="categories" style="display:grid; gap:.75rem;"></div>
-    </div>
-  </template>
 
-  <template id="categoryTpl">
-    <div class="card category" style="padding:.85rem;">
-      <div class="flex-between" style="margin-bottom:.6rem;">
-        <input class="cat-title" placeholder="Category title" style="font-size:1rem; max-width:240px;" />
-        <button class="remove-category secondary" type="button" style="font-size:.8rem; padding:.3rem .7rem; color:var(--bad);">Remove</button>
+      <div class="sb-tabs">
+        <button class="sb-tab active" data-tab="clue">CLUE</button>
+        <button class="sb-tab" data-tab="media">MEDIA</button>
+        <button class="sb-tab" data-tab="notes">HOST NOTES</button>
       </div>
-      <div class="questions grid" style="gap:.65rem;"></div>
-      <button class="add-question secondary" type="button" style="margin-top:.5rem; font-size:.82rem;">+ Question</button>
-    </div>
-  </template>
 
-  <template id="questionTpl">
-    <div class="question-card question grid" style="gap:.5rem;">
-      <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:.5rem; align-items:end;">
-        <label><span>Value ($)</span><input class="q-value" type="number" min="0" step="100" /></label>
-        <label style="display:flex; align-items:center; gap:.4rem; padding-top:1.2rem;">
-          <input class="q-dd" type="checkbox" style="width:auto;" />
-          <span style="font-size:.85rem; color:var(--muted);">Daily Double</span>
-        </label>
-        <button class="remove-question secondary" type="button" style="font-size:.78rem; padding:.3rem .6rem; color:var(--bad); align-self:end;">✕</button>
+      <div class="sb-body">
+        <div id="tab-clue">
+          <div class="field-lbl">CLUE (SHOWN TO PLAYERS)</div>
+          <textarea id="sbClue" class="clue-ta" rows="4" placeholder="Enter the clue shown to players…"></textarea>
+        </div>
+        <div id="tab-media" style="display:none;">
+          <div class="field-lbl">MEDIA</div>
+          <p style="color:var(--dim);font-size:13px;">Media support coming soon.</p>
+        </div>
+        <div id="tab-notes" style="display:none;">
+          <div class="field-lbl">HOST NOTES</div>
+          <textarea id="sbNotes" class="clue-ta" rows="4" placeholder="Notes only visible to host…"></textarea>
+        </div>
+
+        <div>
+          <div class="field-lbl">ANSWER (HOST ONLY)</div>
+          <input id="sbAnswer" class="answer-in" placeholder="WHAT IS…" autocomplete="off" />
+          <div id="sbAliases" class="aliases"></div>
+        </div>
+
+        <div>
+          <div class="opt-lbl">OPTIONS</div>
+          <div class="opt-row">
+            <span class="opt-row-lbl">Daily Double</span>
+            <button id="sbDd" class="toggle"></button>
+          </div>
+          <div class="opt-row">
+            <span class="opt-row-lbl">Value ($)</span>
+            <input id="sbValue" class="val-in" type="number" min="0" step="100" />
+          </div>
+        </div>
       </div>
-      <label><span>Question</span><textarea class="q-question" rows="2" style="resize:vertical;"></textarea></label>
-      <label><span>Answer</span><textarea class="q-answer" rows="1" style="resize:vertical;"></textarea></label>
+
+      <div class="sb-footer">
+        <button class="del-btn" id="sbDelete">DELETE CLUE</button>
+        <button class="next-btn" id="sbNext">NEXT CLUE →</button>
+      </div>
+
     </div>
-  </template>
+  </div>
+</div>
 
-  <script is:inline>
-    // @ts-nocheck
-    const boardId = Number(location.pathname.split('/').pop());
-    const roundsEl    = document.getElementById('rounds');
-    const roundTpl    = document.getElementById('roundTpl');
-    const categoryTpl = document.getElementById('categoryTpl');
-    const questionTpl = document.getElementById('questionTpl');
-    const statusEl    = document.getElementById('status');
-    let dirty = false;
+<script is:inline>
+  // @ts-nocheck
+  const BID = Number(location.pathname.split('/').pop());
+  let board    = null;
+  let roundIdx = 0;
+  let activeQ  = null; // { ci, qi }
+  let saveTimer = null;
 
-    function setDirty(v = true) {
-      dirty = v;
-      statusEl.textContent = dirty ? '● Unsaved changes' : '✓ All saved';
-      statusEl.style.color = dirty ? 'var(--muted)' : 'var(--ok)';
+  // DOM
+  const tabsEl   = document.getElementById('tabs');
+  const gridEl   = document.getElementById('grid');
+  const sbEmpty  = document.getElementById('sb-empty');
+  const sbCont   = document.getElementById('sb-content');
+  const sbCat    = document.getElementById('sbCat');
+  const sbVal    = document.getElementById('sbVal');
+  const sbClue   = document.getElementById('sbClue');
+  const sbAnswer = document.getElementById('sbAnswer');
+  const sbNotes  = document.getElementById('sbNotes');
+  const sbAliases= document.getElementById('sbAliases');
+  const sbDd     = document.getElementById('sbDd');
+  const sbValue  = document.getElementById('sbValue');
+  const sbDelete = document.getElementById('sbDelete');
+  const sbNext   = document.getElementById('sbNext');
+  const saveDot  = document.getElementById('saveDot');
+  const saveLabel= document.getElementById('saveLabel');
+
+  // ── Save status ────────────────────────────────────────────────────────────
+  function markSaved() {
+    saveDot.className = 'save-dot';
+    saveLabel.textContent = 'AUTOSAVED · JUST NOW';
+  }
+  function markSaving() {
+    saveDot.className = 'save-dot saving';
+    saveLabel.textContent = 'SAVING…';
+  }
+  function markDirty() {
+    saveDot.className = 'save-dot dirty';
+    saveLabel.textContent = 'UNSAVED CHANGES';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 2000);
+  }
+  function markError() {
+    saveDot.className = 'save-dot error';
+    saveLabel.textContent = 'SAVE FAILED';
+  }
+  window.addEventListener('beforeunload', (e) => {
+    if (saveDot.classList.contains('dirty')) e.preventDefault();
+  });
+
+  // ── API ────────────────────────────────────────────────────────────────────
+  async function load() {
+    const res = await fetch(`/api/boards/${BID}`);
+    if (!res.ok) return;
+    board = await res.json();
+    document.getElementById('titleInput').value = board.title || '';
+    if (!board.rounds?.length) {
+      board.rounds = [defaultRound('Round 1')];
     }
-    window.addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
-
-    function addQuestion(container, data = {}) {
-      const node = questionTpl.content.firstElementChild.cloneNode(true);
-      if (data.id) node.dataset.id = data.id;
-      node.querySelector('.q-value').value = data.value ?? 200;
-      node.querySelector('.q-question').value = data.question ?? '';
-      node.querySelector('.q-answer').value = data.answer ?? '';
-      node.querySelector('.q-dd').checked = !!data.isDailyDouble;
-      node.querySelector('.remove-question').addEventListener('click', () => { node.remove(); setDirty(); });
-      node.querySelectorAll('input,textarea').forEach((el) => el.addEventListener('input', () => setDirty()));
-      container.appendChild(node);
+    // Ensure each category has exactly ROWS questions
+    for (const r of board.rounds) {
+      const rows = getRoundRows(r);
+      for (const cat of (r.categories || [])) {
+        while (cat.questions.length < rows) {
+          cat.questions.push({ value: (cat.questions.length + 1) * 200, question: '', answer: '', isDailyDouble: false, position: cat.questions.length });
+        }
+      }
     }
+    render();
+    markSaved();
+  }
 
-    function addCategory(roundNode, data = {}) {
-      const node = categoryTpl.content.firstElementChild.cloneNode(true);
-      if (data.id) node.dataset.id = data.id;
-      node.querySelector('.cat-title').value = data.title ?? '';
-      const qContainer = node.querySelector('.questions');
-      (data.questions ?? []).forEach((q) => addQuestion(qContainer, q));
-      node.querySelector('.add-question').addEventListener('click', () => { addQuestion(qContainer, { value: 200 }); setDirty(); });
-      node.querySelector('.remove-category').addEventListener('click', () => { node.remove(); setDirty(); });
-      node.querySelectorAll('input,textarea').forEach((el) => el.addEventListener('input', () => setDirty()));
-      roundNode.querySelector('.categories').appendChild(node);
-    }
+  function getRoundRows(r) {
+    if (!r?.categories?.length) return 0;
+    return Math.max(...r.categories.map(c => c.questions.length), 0);
+  }
 
-    function addRound(data = {}) {
-      const node = roundTpl.content.firstElementChild.cloneNode(true);
-      if (data.id) node.dataset.id = data.id;
-      node.querySelector('.round-title').value = data.title ?? 'Round ' + (roundsEl.querySelectorAll('.round').length + 1);
-      (data.categories ?? []).forEach((cat) => addCategory(node, cat));
-      node.querySelector('.add-category').addEventListener('click', () => {
-        addCategory(node, { title: 'New Category', questions: [] });
-        setDirty();
-      });
-      node.querySelector('.remove-round').addEventListener('click', () => {
-        if (roundsEl.querySelectorAll('.round').length <= 1) { alert('A board must have at least one round.'); return; }
-        node.remove();
-        setDirty();
-      });
-      node.querySelector('.round-title').addEventListener('input', () => setDirty());
-      roundsEl.appendChild(node);
-    }
-
-    function readBoard() {
-      return {
-        title: document.getElementById('title').value,
-        rounds: Array.from(roundsEl.querySelectorAll('.round')).map((rNode, ri) => ({
-          id: rNode.dataset.id ? Number(rNode.dataset.id) : undefined,
-          title: rNode.querySelector('.round-title').value,
-          position: ri,
-          categories: Array.from(rNode.querySelectorAll('.category')).map((cNode, ci) => ({
-            id: cNode.dataset.id ? Number(cNode.dataset.id) : undefined,
-            title: cNode.querySelector('.cat-title').value,
-            position: ci,
-            questions: Array.from(cNode.querySelectorAll('.question')).map((qNode, qi) => ({
-              id: qNode.dataset.id ? Number(qNode.dataset.id) : undefined,
-              value: Number(qNode.querySelector('.q-value').value || 0),
-              question: qNode.querySelector('.q-question').value,
-              answer: qNode.querySelector('.q-answer').value,
-              isDailyDouble: qNode.querySelector('.q-dd').checked,
-              position: qi,
-            })),
-          })),
-        })),
-      };
-    }
-
-    async function loadBoard() {
-      const res = await fetch(`/api/boards/${boardId}`);
-      if (!res.ok) return;
-      const board = await res.json();
-      document.getElementById('title').value = board.title;
-      document.getElementById('boardName').textContent = board.title;
-      roundsEl.innerHTML = '';
-      (board.rounds ?? []).forEach((r) => addRound(r));
-      if (!board.rounds?.length) addRound({ title: 'Round 1' });
-      setDirty(false);
-    }
-
-    document.getElementById('addRound').addEventListener('click', () => {
-      addRound({ title: 'Round ' + (roundsEl.querySelectorAll('.round').length + 1) });
-      setDirty();
-    });
-
-    document.getElementById('title').addEventListener('input', () => {
-      document.getElementById('boardName').textContent = document.getElementById('title').value;
-      setDirty();
-    });
-
-    document.getElementById('save').addEventListener('click', async () => {
-      statusEl.textContent = 'Saving...';
-      const res = await fetch(`/api/boards/${boardId}`, {
+  async function save() {
+    if (!board) return;
+    flushSidebar();
+    markSaving();
+    try {
+      const res = await fetch(`/api/boards/${BID}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(readBoard()),
+        body: JSON.stringify(board),
       });
-      if (!res.ok) { statusEl.textContent = '✗ Save failed'; statusEl.style.color = 'var(--bad)'; return; }
-      // Re-load to get IDs for new items
-      await loadBoard();
+      if (!res.ok) { markError(); return; }
+      // Reload to sync server-assigned IDs
+      const updated = await res.json();
+      mergeIds(board, updated);
+      markSaved();
+    } catch { markError(); }
+  }
+
+  function mergeIds(local, remote) {
+    if (!remote?.rounds) return;
+    remote.rounds.forEach((rr, ri) => {
+      if (!local.rounds[ri]) return;
+      local.rounds[ri].id = rr.id;
+      (rr.categories || []).forEach((rc, ci) => {
+        if (!local.rounds[ri].categories[ci]) return;
+        local.rounds[ri].categories[ci].id = rc.id;
+        (rc.questions || []).forEach((rq, qi) => {
+          if (!local.rounds[ri].categories[ci].questions[qi]) return;
+          local.rounds[ri].categories[ci].questions[qi].id = rq.id;
+        });
+      });
+    });
+  }
+
+  function defaultRound(title) {
+    return {
+      title, position: 0, categories: [],
+    };
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  function render() {
+    renderTabs();
+    renderGrid();
+  }
+
+  function renderTabs() {
+    tabsEl.innerHTML = '';
+    (board.rounds || []).forEach((r, i) => {
+      const filled = (r.categories || []).reduce((s, c) =>
+        s + (c.questions || []).filter(q => q.question?.trim()).length, 0);
+      const rows = getRoundRows(r);
+      const total = (r.categories || []).length * rows;
+
+      const item = document.createElement('div');
+      item.className = 'tab-item' + (i === roundIdx ? ' active' : '');
+
+      const btn = document.createElement('button');
+      btn.className = 'tab-btn';
+      btn.textContent = `${(r.title || 'Round').toUpperCase()}  ${filled}/${total}`;
+      btn.addEventListener('click', () => {
+        flushSidebar();
+        roundIdx = i; activeQ = null;
+        render(); showSidebar(false);
+      });
+      item.appendChild(btn);
+
+      const del = document.createElement('button');
+      del.className = 'tab-del';
+      del.textContent = '×';
+      del.title = 'Delete Round';
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteRound(i);
+      });
+      item.appendChild(del);
+
+      tabsEl.appendChild(item);
+    });
+    const add = document.createElement('button');
+    add.className = 'tab-add';
+    add.textContent = '+';
+    add.title = 'Add Round';
+    add.addEventListener('click', () => {
+      flushSidebar();
+      const n = board.rounds.length + 1;
+      board.rounds.push(defaultRound(`Round ${n}`));
+      roundIdx = board.rounds.length - 1;
+      activeQ = null;
+      render(); showSidebar(false); markDirty();
+    });
+    tabsEl.appendChild(add);
+  }
+
+  function renderGrid() {
+    const round = board.rounds[roundIdx];
+    if (!round) { gridEl.innerHTML = ''; return; }
+    const cats = round.categories || [];
+    let html = '';
+
+    // 1. Value Column
+    const rows = getRoundRows(round);
+    html += `<div class="grid-col val-col">
+      <div style="height:80px; margin-bottom:6px;"></div>`;
+    for (let qi = 0; qi < rows; qi++) {
+      const rowVal = cats[0]?.questions[qi]?.value ?? (qi + 1) * 200;
+      html += `<div class="val-cell"
+          draggable="true"
+          data-qi="${qi}"
+          ondragstart="onRowDragStart(event, ${qi})"
+          ondragover="onRowDragOver(event)"
+          ondragleave="onRowDragLeave(event)"
+          ondragend="onRowDragEnd(event)"
+          ondrop="onRowDrop(event, ${qi})"
+        >
+        <button class="val-cell-edit" onclick="startEditVal(${qi})">EDIT</button>
+        <button class="val-cell-del" onclick="removeRow(${qi})">×</button>
+        <div class="val-cell-text" id="val-disp-${qi}">$${rowVal}</div>
+      </div>`;
+    }
+    html += `<button class="ghost-btn" onclick="addRow()" style="font-size: 10px; padding: 8px; border-style: dashed; opacity: 0.6; width:100%;">+ ADD ROW</button>`;
+    html += `</div>`;
+
+    // 2. Category Columns
+    cats.forEach((cat, ci) => {
+      const title = esc((cat.title || 'CATEGORY').toUpperCase());
+      html += `<div class="grid-col"
+          draggable="true"
+          data-ci="${ci}"
+          ondragstart="onCatDragStart(event, ${ci})"
+          ondragover="onCatDragOver(event)"
+          ondragleave="onCatDragLeave(event)"
+          ondragend="onCatDragEnd(event)"
+          ondrop="onCatDrop(event, ${ci})"
+        >
+        <div class="cat-hdr">
+          <button class="cat-hdr-edit" onclick="startEditCat(${ci})">EDIT</button>
+          <button class="cat-hdr-del" onclick="removeCategory(${ci})">×</button>
+          <div class="cat-hdr-text" id="cat-disp-${ci}">${title}</div>
+        </div>`;
+      
+      for (let qi = 0; qi < rows; qi++) {
+        const q = (cat.questions || [])[qi] || {};
+        const isActive = activeQ && activeQ.ci === ci && activeQ.qi === qi;
+        const hasContent = q.question?.trim();
+        const isDd = q.isDailyDouble;
+        const rowVal = cats[0]?.questions[qi]?.value ?? (qi + 1) * 200;
+        
+        html += `<div class="q-cell${isActive ? ' active' : ''}" 
+            draggable="true"
+            onclick="selectQ(${ci},${qi})"
+            ondragstart="onQDragStart(event, ${ci}, ${qi})"
+            ondragover="onQDragOver(event)"
+            ondragleave="onQDragLeave(event)"
+            ondragend="onQDragEnd(event)"
+            ondrop="onQDrop(event, ${ci}, ${qi})"
+          >
+          ${hasContent ? `<div class="q-prev">${esc(q.question)}</div>` : ''}
+          ${isActive  ? `<div class="badge badge-editing">EDITING ▾</div>` : ''}
+          ${isDd && !isActive ? `<div class="badge badge-dd">DAILY DOUBLE</div>` : ''}
+        </div>`;
+      }
+      html += `</div>`;
     });
 
-    loadBoard();
-  </script>
+    // 3. Add Category
+    html += `<div class="grid-col add-cat-col">
+      <button class="add-cat-btn" onclick="addCategory()">+ CATEGORY</button>
+    </div>`;
+
+    gridEl.innerHTML = html;
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Drag & Drop ───────────────────────────────────────────────────────────
+  let dragSource = null; // { ci, qi }
+
+  function onQDragStart(e, ci, qi) {
+    dragSource = { ci, qi };
+    e.target.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onQDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const cell = e.target.closest('.q-cell');
+    if (cell) cell.classList.add('drag-over');
+    return false;
+  }
+
+  function onQDragLeave(e) {
+    const cell = e.target.closest('.q-cell');
+    if (cell) cell.classList.remove('drag-over');
+  }
+
+  function onQDragEnd(e) {
+    e.target.classList.remove('dragging');
+  }
+
+  function onQDrop(e, targetCi, targetQi) {
+    e.preventDefault();
+    const cell = e.target.closest('.q-cell');
+    if (cell) cell.classList.remove('drag-over');
+
+    if (!dragSource) return;
+    if (dragSource.ci === targetCi && dragSource.qi === targetQi) return;
+
+    const round = board.rounds[roundIdx];
+    const sourceQ = round.categories[dragSource.ci].questions[dragSource.qi];
+    const targetQ = round.categories[targetCi].questions[targetQi];
+
+    const temp = { ...sourceQ };
+    
+    sourceQ.question = targetQ.question;
+    sourceQ.answer = targetQ.answer;
+    sourceQ.hostNotes = targetQ.hostNotes;
+    sourceQ.isDailyDouble = targetQ.isDailyDouble;
+    
+    targetQ.question = temp.question;
+    targetQ.answer = temp.answer;
+    targetQ.hostNotes = temp.hostNotes;
+    targetQ.isDailyDouble = temp.isDailyDouble;
+
+    renderGrid();
+    markDirty();
+    dragSource = null;
+  }
+
+  // Category Drag & Drop
+  let catDragSource = null;
+
+  function onCatDragStart(e, ci) {
+    catDragSource = ci;
+    e.target.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onCatDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const col = e.target.closest('.grid-col');
+    if (!col || col.classList.contains('val-col') || col.classList.contains('add-cat-col')) return false;
+    
+    const targetCi = Number(col.dataset.ci);
+    if (catDragSource !== null && catDragSource !== targetCi) {
+      const round = board.rounds[roundIdx];
+      const temp = round.categories[catDragSource];
+      round.categories[catDragSource] = round.categories[targetCi];
+      round.categories[targetCi] = temp;
+      
+      catDragSource = targetCi;
+      renderGrid();
+    }
+    return false;
+  }
+
+  function onCatDragLeave(e) {
+    const col = e.target.closest('.grid-col');
+    if (col) col.classList.remove('drag-over');
+  }
+
+  function onCatDragEnd(e) {
+    e.target.classList.remove('dragging');
+  }
+
+  function onCatDrop(e, targetCi) {
+    e.preventDefault();
+    markDirty();
+    catDragSource = null;
+  }
+
+  // Row Drag & Drop
+  let rowDragSource = null;
+
+  function onRowDragStart(e, qi) {
+    rowDragSource = qi;
+    e.target.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onRowDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const cell = e.target.closest('.val-cell');
+    if (!cell) return false;
+    
+    const targetQi = Number(cell.dataset.qi);
+    if (rowDragSource !== null && rowDragSource !== targetQi) {
+      const round = board.rounds[roundIdx];
+      // Swap across all categories
+      round.categories.forEach(cat => {
+        const temp = cat.questions[rowDragSource];
+        cat.questions[rowDragSource] = cat.questions[targetQi];
+        cat.questions[targetQi] = temp;
+      });
+      
+      rowDragSource = targetQi;
+      renderGrid();
+    }
+    return false;
+  }
+
+  function onRowDragLeave(e) {
+    const cell = e.target.closest('.val-cell');
+    if (cell) cell.classList.remove('drag-over');
+  }
+
+  function onRowDragEnd(e) {
+    e.target.classList.remove('dragging');
+  }
+
+  function onRowDrop(e, targetQi) {
+    e.preventDefault();
+    markDirty();
+    rowDragSource = null;
+    renderGrid();
+  }
+
+  // ── Category ops ───────────────────────────────────────────────────────────
+  function addCategory() {
+    const round = board.rounds[roundIdx];
+    if (!round) return;
+    const rows = getRoundRows(round);
+    const pos = round.categories.length;
+    round.categories.push({
+      title: 'NEW CATEGORY', position: pos,
+      questions: Array.from({length: rows}, (_, i) => ({
+        value: round.categories[0]?.questions[i]?.value ?? (i + 1) * 200, 
+        question: '', answer: '', isDailyDouble: false, position: i,
+      })),
+    });
+    render(); markDirty();
+  }
+
+  function removeCategory(ci) {
+    const round = board.rounds[roundIdx];
+    if (!round || !round.categories[ci]) return;
+    if (!confirm('Delete this category and all its clues?')) return;
+    round.categories.splice(ci, 1);
+    activeQ = null;
+    render(); markDirty();
+  }
+
+  function startEditCat(ci) {
+    const round = board.rounds[roundIdx];
+    const cat = round?.categories[ci];
+    if (!cat) return;
+    const disp = document.getElementById(`cat-disp-${ci}`);
+    if (!disp) return;
+    const ta = document.createElement('textarea');
+    ta.className = 'cat-hdr-input';
+    ta.value = cat.title || '';
+    ta.rows = 2;
+    ta.addEventListener('blur', () => {
+      cat.title = ta.value.trim() || 'CATEGORY';
+      renderGrid(); markDirty();
+    });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.blur(); }
+      if (e.key === 'Escape') { ta.value = cat.title; ta.blur(); }
+    });
+    disp.replaceWith(ta);
+    ta.focus(); ta.select();
+  }
+
+  // ── Question selection ─────────────────────────────────────────────────────
+  function selectQ(ci, qi) {
+    const round = board.rounds[roundIdx];
+    if (!round) return;
+    flushSidebar();
+    activeQ = { ci, qi };
+    renderGrid();
+    showSidebar(true);
+  }
+
+  function deleteRound(i) {
+    if (board.rounds.length <= 1) return;
+    if (!confirm('Delete this round and all its categories?')) return;
+    board.rounds.splice(i, 1);
+    if (roundIdx >= board.rounds.length) roundIdx = board.rounds.length - 1;
+    activeQ = null;
+    render(); showSidebar(false); markDirty();
+  }
+
+  function addRow() {
+    const round = board.rounds[roundIdx];
+    if (!round) return;
+    round.categories.forEach(cat => {
+      const qi = cat.questions.length;
+      const prevVal = cat.questions[qi-1]?.value ?? 0;
+      const val = prevVal + 200;
+      cat.questions.push({
+        value: val, question: '', answer: '', isDailyDouble: false, position: qi
+      });
+    });
+    renderGrid(); markDirty();
+  }
+
+  function updateRowValue(qi, val) {
+    const v = Number(val) || 0;
+    const round = board.rounds[roundIdx];
+    if (!round) return;
+    round.categories.forEach(cat => {
+      if (cat.questions[qi]) cat.questions[qi].value = v;
+    });
+    renderGrid();
+    markDirty();
+  }
+
+  function removeRow(qi) {
+    const round = board.rounds[roundIdx];
+    if (!round) return;
+    if (!confirm('Remove this entire row from all categories?')) return;
+    round.categories.forEach(cat => {
+      if (cat.questions[qi]) cat.questions.splice(qi, 1);
+    });
+    activeQ = null;
+    renderGrid(); markDirty();
+  }
+
+  function startEditVal(qi) {
+    const round = board.rounds[roundIdx];
+    const firstCat = round?.categories[0];
+    const q = firstCat?.questions[qi];
+    if (!q) return;
+    const disp = document.getElementById(`val-disp-${qi}`);
+    if (!disp) return;
+    const inpt = document.createElement('input');
+    inpt.className = 'val-cell-input';
+    inpt.type = 'number';
+    inpt.value = q.value || 0;
+    inpt.addEventListener('blur', () => {
+      updateRowValue(qi, inpt.value);
+    });
+    inpt.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') inpt.blur();
+      if (e.key === 'Escape') { inpt.value = q.value; inpt.blur(); }
+    });
+    disp.replaceWith(inpt);
+    inpt.focus(); inpt.select();
+  }
+
+  // ── Sidebar ────────────────────────────────────────────────────────────────
+  function showSidebar(show) {
+    sbEmpty.style.display = show ? 'none' : 'flex';
+    sbCont.classList.toggle('visible', show);
+    if (show) populateSidebar();
+  }
+
+  function getActiveQ() {
+    if (!activeQ) return null;
+    return board.rounds[roundIdx]?.categories[activeQ.ci]?.questions[activeQ.qi] ?? null;
+  }
+
+  function populateSidebar() {
+    const q   = getActiveQ();
+    const cat = board.rounds[roundIdx]?.categories[activeQ?.ci];
+    if (!q || !cat) return;
+    sbCat.textContent    = (cat.title || 'CATEGORY').toUpperCase();
+    sbVal.textContent    = `$${q.value ?? 0}`;
+    sbClue.value         = q.question || '';
+    sbAnswer.value       = q.answer || '';
+    sbNotes.value        = q.hostNotes || '';
+    updateAliases(q.answer);
+    sbDd.className       = 'toggle' + (q.isDailyDouble ? ' on' : '');
+    sbValue.value        = q.value ?? '';
+  }
+
+  function flushSidebar() {
+    const q = getActiveQ();
+    if (!q) return;
+    q.question    = sbClue.value;
+    q.answer      = sbAnswer.value;
+    q.hostNotes   = sbNotes.value;
+    q.value       = Number(sbValue.value) || q.value;
+    q.isDailyDouble = sbDd.classList.contains('on');
+  }
+
+  function updateAliases(answer) {
+    const stripped = (answer || '').replace(/^what is\s+/i,'').replace(/[?.!]$/,'').trim().toLowerCase();
+    sbAliases.textContent = stripped
+      ? `Aliases (host can accept): ${stripped}, ${stripped.split(' ').filter(Boolean).join(', ')}`
+      : '';
+  }
+
+  // Live sync sidebar → state
+  sbClue.addEventListener('input', () => {
+    const q = getActiveQ();
+    if (!q) return;
+    q.question = sbClue.value;
+    // update preview in grid without full re-render
+    const cells = gridEl.querySelectorAll('.q-cell');
+    const cats = board.rounds[roundIdx]?.categories || [];
+    const idx = activeQ.qi * cats.length + activeQ.ci;
+    const cell = cells[idx];
+    if (cell) {
+      let prev = cell.querySelector('.q-prev');
+      if (q.question.trim()) {
+        if (!prev) { prev = document.createElement('div'); prev.className = 'q-prev'; cell.appendChild(prev); }
+        prev.textContent = q.question;
+      } else if (prev) prev.remove();
+    }
+    markDirty();
+  });
+
+  sbAnswer.addEventListener('input', () => {
+    const q = getActiveQ();
+    if (!q) return;
+    q.answer = sbAnswer.value;
+    updateAliases(sbAnswer.value);
+    markDirty();
+  });
+
+  sbNotes.addEventListener('input', () => { const q = getActiveQ(); if (q) q.hostNotes = sbNotes.value; markDirty(); });
+
+  sbValue.addEventListener('input', () => {
+    const q = getActiveQ();
+    if (!q) return;
+    const v = Number(sbValue.value) || 0;
+    q.value = v;
+    sbVal.textContent = `$${v}`;
+    const cells = gridEl.querySelectorAll('.q-cell');
+    const cats = board.rounds[roundIdx]?.categories || [];
+    const idx = activeQ.qi * cats.length + activeQ.ci;
+    const cell = cells[idx];
+    if (cell) { const valEl = cell.querySelector('.q-val'); if (valEl) valEl.textContent = `$${v}`; }
+    markDirty();
+  });
+
+  sbDd.addEventListener('click', () => {
+    sbDd.classList.toggle('on');
+    const q = getActiveQ();
+    if (!q) return;
+    q.isDailyDouble = sbDd.classList.contains('on');
+    // update badge
+    const cells = gridEl.querySelectorAll('.q-cell');
+    const cats = board.rounds[roundIdx]?.categories || [];
+    const idx = activeQ.qi * cats.length + activeQ.ci;
+    const cell = cells[idx];
+    if (cell) {
+      let badge = cell.querySelector('.badge-dd');
+      if (q.isDailyDouble) {
+        if (!badge) { badge = document.createElement('div'); badge.className = 'badge badge-dd'; badge.textContent = 'DAILY DOUBLE'; cell.appendChild(badge); }
+      } else if (badge) badge.remove();
+    }
+    markDirty();
+  });
+
+  sbDelete.addEventListener('click', () => {
+    const q = getActiveQ();
+    if (!q) return;
+    q.question = ''; q.answer = ''; q.isDailyDouble = false; q.hostNotes = '';
+    populateSidebar();
+    renderGrid();
+    markDirty();
+  });
+
+  sbNext.addEventListener('click', () => {
+    if (!activeQ) return;
+    flushSidebar();
+    const round = board.rounds[roundIdx];
+    const cats = round?.categories || [];
+    const rows = getRoundRows(round);
+    let { ci, qi } = activeQ;
+    ci++;
+    if (ci >= cats.length) { ci = 0; qi++; }
+    if (qi >= rows) { ci = 0; qi = 0; }
+    activeQ = { ci, qi };
+    renderGrid();
+    populateSidebar();
+    markDirty();
+  });
+
+  // Sidebar tab switching
+  document.querySelectorAll('.sb-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.sb-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      ['clue','media','notes'].forEach(id => {
+        document.getElementById(`tab-${id}`).style.display = (tab.dataset.tab === id) ? '' : 'none';
+      });
+    });
+  });
+
+  // Header
+  document.getElementById('titleInput').addEventListener('input', (e) => {
+    board.title = e.target.value; markDirty();
+  });
+
+  document.getElementById('shareBtn').addEventListener('click', () => {
+    navigator.clipboard?.writeText(location.href).catch(() => {});
+  });
+
+  document.getElementById('startBtn').addEventListener('click', () => {
+    flushSidebar();
+    window.location.href = '/dashboard';
+  });
+
+  // Boot
+  load();
+</script>
 </body>
 </html>

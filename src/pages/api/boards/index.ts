@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { db, schema } from '@/lib/db';
+import { db, schema, insertReturningId } from '@/lib/db';
 import { eq, desc } from 'drizzle-orm';
 
 export const GET: APIRoute = async ({ locals }) => {
@@ -16,19 +16,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const body = await request.json();
   const title = String(body.title || 'New Board').trim();
 
-  const [{ id: boardId }] = await db.insert(schema.boards)
-    .values({ hostId: locals.host.hostId, title })
-    .$returningId();
-
+  const boardId = await insertReturningId(schema.boards, { hostId: locals.host.hostId, title });
+  
   // Create default "Round 1" with 6 categories × 5 questions
-  const [{ id: roundId }] = await db.insert(schema.rounds)
-    .values({ boardId, title: 'Round 1', position: 0 })
-    .$returningId();
+  const roundId = await insertReturningId(schema.rounds, { boardId, title: 'Round 1', position: 0 });
 
   for (let ci = 0; ci < 6; ci++) {
-    const [{ id: categoryId }] = await db.insert(schema.categories)
-      .values({ roundId, title: `Category ${ci + 1}`, position: ci })
-      .$returningId();
+    const categoryId = await insertReturningId(schema.categories, { roundId, title: `Category ${ci + 1}`, position: ci });
     for (let qi = 0; qi < 5; qi++) {
       await db.insert(schema.questions).values({
         categoryId,

@@ -1,11 +1,11 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { createHash } from 'node:crypto';
-import { db, schema } from '@/lib/db';
+import { db, schema, insertReturningId } from '@/lib/db';
 import { eq, and } from 'drizzle-orm';
 
 const jwtSecret: string = (() => {
-  const value = process.env.JWT_SECRET;
+  const value = import.meta.env.JWT_SECRET || (typeof process !== 'undefined' ? process.env.JWT_SECRET : undefined);
   if (!value) throw new Error('JWT_SECRET is required');
   return value;
 })();
@@ -37,10 +37,7 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 export async function issueHostToken(hostId: number, email: string) {
-  const [{ id: tokenId }] = await db
-    .insert(schema.authTokens)
-    .values({ hostId, tokenHash: '' })
-    .$returningId();
+  const tokenId = await insertReturningId(schema.authTokens, { hostId, tokenHash: '' });
 
   const token = jwt.sign({ hostId, email, tokenId }, jwtSecret, { expiresIn: '7d' });
   await db

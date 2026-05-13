@@ -21,8 +21,8 @@ const initialPlayerId = payload?.playerId ?? '';
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Jeoparty — Play</title>
   <style>
-    html, body { height: 100%; overflow: hidden; background: var(--bg); }
-    #scale-root { transform-origin: top left; width: 390px; }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); margin: 0; }
+    #scale-root { transform-origin: top left; }
     .state-section { display: flex; flex-direction: column; gap: .75rem; padding: 1rem; }
   </style>
 </head>
@@ -31,7 +31,7 @@ const initialPlayerId = payload?.playerId ?? '';
 
     <!-- Join form (shown if not yet joined) -->
     <div id="joinCard" class={`state-section ${isJoined ? 'hidden' : ''}`} style="min-height:100vh; justify-content:center; align-items:center;">
-      <div style="text-align:center; font-family:'Fredoka',sans-serif; font-size:2.5rem; font-weight:700; color:var(--accent);">JEOPARTY</div>
+      <div style="text-align:center; font-family:'Anton',sans-serif; font-size:2.5rem; font-weight:700; color:var(--accent);">JEOPARTY</div>
       <div class="card grid" style="width:100%;">
         <h2 style="text-align:center;">Join Game</h2>
         <div class="join-code" style="text-align:center; font-size:3rem;">{gameId}</div>
@@ -49,7 +49,7 @@ const initialPlayerId = payload?.playerId ?? '';
         <div class="card grid">
           <div class="flex-between">
             <h2 id="stateTitle" style="font-size:1.6rem;">Lobby</h2>
-            <span id="myScore" style="font-family:'Fredoka',sans-serif; font-size:1.4rem; color:var(--accent);"></span>
+            <span id="myScore" style="font-family:'Anton',sans-serif; font-size:1.4rem; color:var(--accent);"></span>
           </div>
           <p id="stateText" class="muted">Waiting for the host to start...</p>
 
@@ -83,10 +83,15 @@ const initialPlayerId = payload?.playerId ?? '';
     /* ── Scaling ───────────────────────────────────────────────────────────── */
     function scale() {
       const root = document.getElementById('scale-root');
-      const s = window.innerWidth / 390;
-      root.style.transform = `scale(${s})`;
-      root.style.height = (window.innerHeight / s) + 'px';
-      document.body.style.overflow = 'hidden';
+      const tw = 390; const th = 844;
+      const s = Math.min(window.innerWidth / tw, window.innerHeight / th);
+      root.style.width = tw + 'px';
+      root.style.height = th + 'px';
+      root.style.transform = `scale(${s}) translate(-50%, -50%)`;
+      root.style.left = '50%';
+      root.style.top = '50%';
+      root.style.position = 'absolute';
+      root.style.transformOrigin = 'top left';
     }
     scale();
     window.addEventListener('resize', scale);

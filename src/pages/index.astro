@@ -1,106 +1,538 @@
 ---
 import '@/styles/global.css';
+import { db, schema } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+
 const nextParam = Astro.url.searchParams.get('next') ?? '';
-// Validate next: must be a relative path starting with /
 const safeNext = /^\/[a-zA-Z0-9/_-]/.test(nextParam) ? nextParam : '';
-if (Astro.locals.host) return Astro.redirect(safeNext || '/dashboard');
+const host = Astro.locals.host;
 const disableReg = process.env.DISABLE_REGISTRATION === 'true';
+
+let boards: { id: number; title: string; updatedAt: Date | null }[] = [];
+if (host) {
+  boards = await db
+    .select({ id: schema.boards.id, title: schema.boards.title, updatedAt: schema.boards.updatedAt })
+    .from(schema.boards)
+    .where(eq(schema.boards.hostId, host.hostId));
+}
+
+function timeAgo(d: Date | null) {
+  if (!d) return '';
+  const diff = (Date.now() - new Date(d).getTime()) / 1000;
+  if (diff < 60) return 'Edited just now';
+  if (diff < 3600) return `Edited ${Math.floor(diff / 60)} min ago`;
+  if (diff < 86400) return `Edited ${Math.floor(diff / 3600)} hr ago`;
+  return `Edited ${Math.floor(diff / 86400)} days ago`;
+}
+
+const ACCENT_COLORS = ['var(--gold)', 'var(--magenta)', 'var(--mint)', 'var(--violet)'];
 ---
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width" />
-  <title>Jeoparty — Jackbox meets Jeopardy</title>
+  <title>Jeoparty — Trivia night, your living room</title>
+  <style is:global>
+    /* ── Homepage layout ─────────────────────────────────── */
+    .hp-page {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      background: radial-gradient(ellipse at 30% -10%, var(--bg3) 0%, var(--bg) 55%);
+    }
+
+    /* Nav */
+    .hp-nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 22px 48px;
+    }
+    .hp-nav-logo { display: flex; align-items: baseline; gap: 10px; }
+    .hp-brand {
+      font-family: 'Anton', sans-serif; font-size: 28px; color: var(--gold);
+      letter-spacing: 0.02em; line-height: 1;
+    }
+    .hp-version {
+      font-size: 10px; color: var(--dim); letter-spacing: 0.24em;
+      padding: 3px 8px; border-radius: 4px; background: var(--bg2);
+    }
+    .hp-nav-links { display: flex; gap: 28px; align-items: center; }
+    .hp-nav-links a {
+      color: var(--dim); font-size: 14px; text-decoration: none; letter-spacing: 0.04em;
+      transition: color .15s;
+    }
+    .hp-nav-links a:hover { color: var(--ink); text-decoration: none; }
+    .hp-signin-btn {
+      background: transparent !important; color: var(--ink) !important;
+      border: 1px solid var(--line2) !important; padding: 8px 16px !important;
+      font-size: 12px !important; letter-spacing: 0.14em !important;
+      font-family: 'Anton', sans-serif !important; border-radius: 8px !important;
+      box-shadow: none !important; transition: border-color .15s !important;
+    }
+    .hp-signin-btn:hover { border-color: var(--dim) !important; transform: none !important; box-shadow: none !important; }
+
+    /* Hero */
+    .hp-hero {
+      display: flex; gap: 48px; padding: 16px 48px 28px; flex: 1;
+    }
+    .hp-hero-left { flex: 1; padding-top: 8px; }
+    .hp-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 14px; border-radius: 999px;
+      background: var(--bg2); border: 1px solid var(--line2);
+      font-size: 11px; color: var(--dim); letter-spacing: 0.14em;
+      margin-bottom: 20px;
+    }
+    .hp-pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); flex-shrink: 0; }
+    .hp-h1 {
+      font-family: 'Anton', sans-serif; font-size: clamp(56px, 8vw, 100px);
+      line-height: 0.92; letter-spacing: 0.01em; margin: 0 0 22px;
+      color: var(--ink);
+    }
+    .hp-h1-gold { color: var(--gold); }
+    .hp-sub { max-width: 520px; color: var(--dim); font-size: 16px; line-height: 1.55; }
+
+    .hp-hero-right { width: 440px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; }
+
+    /* Host card */
+    .hp-host-card {
+      background: linear-gradient(160deg, var(--violet) 0%, #4830C9 100%);
+      border-radius: 18px; padding: 26px 28px;
+      box-shadow: 0 20px 50px rgba(124,92,255,0.32), inset 0 -8px 0 rgba(0,0,0,0.22);
+      position: relative; overflow: hidden;
+    }
+    .hp-host-card::before {
+      content: ''; position: absolute; right: -30px; top: -40px;
+      width: 140px; height: 140px; border-radius: 50%;
+      background: rgba(255,255,255,0.07); pointer-events: none;
+    }
+    .hp-host-lbl { font-size: 11px; color: rgba(255,255,255,0.7); letter-spacing: 0.22em; margin-bottom: 6px; }
+    .hp-host-title {
+      font-family: 'Anton', sans-serif; font-size: 42px; color: #fff; line-height: 1;
+      letter-spacing: 0.02em;
+    }
+    .hp-host-desc { margin-top: 12px; font-size: 13px; color: rgba(255,255,255,0.75); line-height: 1.5; }
+    .hp-host-actions { margin-top: 20px; display: flex; align-items: center; gap: 14px; }
+    .hp-new-room-btn {
+      background: var(--gold) !important; color: #0E0B22 !important;
+      font-family: 'Anton', sans-serif !important; font-size: 17px !important;
+      letter-spacing: 0.08em !important; padding: 13px 24px !important;
+      border-radius: 999px !important; border: none !important;
+      box-shadow: none !important;
+      transition: filter .15s !important;
+    }
+    .hp-new-room-btn:hover { filter: brightness(1.08) !important; transform: none !important; box-shadow: none !important; }
+    .hp-resume { font-size: 12px; color: rgba(255,255,255,0.6); letter-spacing: 0.06em; }
+
+    /* Join card */
+    .hp-join-card {
+      background: var(--bg2); border-radius: 18px;
+      border: 1.5px solid var(--line2); padding: 22px 24px;
+    }
+    .hp-join-lbl { font-size: 11px; color: var(--dim); letter-spacing: 0.22em; margin-bottom: 12px; }
+    .hp-join-row { display: flex; gap: 8px; align-items: center; }
+    .hp-code-wrap { display: flex; gap: 6px; flex: 1; position: relative; }
+    .hp-code-input {
+      position: absolute; inset: 0; opacity: 0; cursor: text;
+      font-size: 1px; z-index: 2; width: 100%;
+    }
+    .hp-code-boxes { display: flex; gap: 6px; flex: 1; pointer-events: none; }
+    .hp-code-box {
+      flex: 1; height: 62px; border-radius: 10px;
+      background: var(--bg); border: 2px solid var(--gold);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Anton', sans-serif; font-size: 32px; color: var(--ink);
+      letter-spacing: 0;
+    }
+    .hp-code-box.empty { border-color: var(--line2); color: var(--dim2); }
+    .hp-join-btn {
+      flex-shrink: 0; padding: 18px 20px !important;
+      background: var(--gold) !important; color: #0E0B22 !important;
+      font-family: 'Anton', sans-serif !important; font-size: 20px !important;
+      letter-spacing: 0.08em !important; border-radius: 12px !important;
+      border: none !important; box-shadow: none !important;
+      transition: filter .15s !important;
+    }
+    .hp-join-btn:hover { filter: brightness(1.08) !important; transform: none !important; }
+    .hp-join-note { margin-top: 10px; font-size: 12px; color: var(--dim); letter-spacing: 0.04em; }
+
+    /* Boards section */
+    .hp-boards { padding: 4px 48px 44px; }
+    .hp-boards-hdr {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .hp-boards-title {
+      font-family: 'Anton', sans-serif; font-size: 26px; color: var(--ink);
+      letter-spacing: 0.04em;
+    }
+    .hp-boards-actions { display: flex; gap: 16px; align-items: center; }
+    .hp-browse-link {
+      color: var(--gold) !important; font-size: 12px; letter-spacing: 0.14em;
+      font-family: 'Anton', sans-serif; text-decoration: none !important;
+    }
+    .hp-browse-link:hover { text-decoration: none !important; opacity: .8; }
+    .hp-new-board-btn {
+      background: transparent !important; color: var(--ink) !important;
+      border: 1px solid var(--line2) !important; padding: 8px 16px !important;
+      font-size: 12px !important; letter-spacing: 0.14em !important;
+      font-family: 'Anton', sans-serif !important; border-radius: 8px !important;
+      box-shadow: none !important;
+    }
+    .hp-new-board-btn:hover { border-color: var(--dim) !important; transform: none !important; box-shadow: none !important; }
+    .hp-boards-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    @media (max-width: 1100px) { .hp-boards-grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 800px)  { .hp-boards-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    /* Board card */
+    .hp-board-card {
+      background: var(--bg2);
+      border-radius: 14px; padding: 16px 16px 14px;
+      display: flex; flex-direction: column; gap: 12px;
+      position: relative; overflow: hidden;
+      text-decoration: none !important; color: var(--ink) !important;
+      border: 1.5px solid var(--line);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .hp-board-card:hover { text-decoration: none !important; border-color: var(--line2); }
+    .hp-board-card.featured { box-shadow: 0 0 28px var(--card-accent, var(--gold))33; }
+    .hp-board-mini {
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px;
+      background: var(--bg); padding: 6px; border-radius: 6px;
+    }
+    .hp-mini-hdr { aspect-ratio: 1; border-radius: 1px; opacity: 0.85; }
+    .hp-mini-cell { aspect-ratio: 1; background: var(--bg3); border-radius: 1px; }
+    .hp-mini-empty { aspect-ratio: 1; background: transparent; border: 1px dashed var(--line); border-radius: 1px; }
+    .hp-board-name {
+      font-family: 'Anton', sans-serif; font-size: 17px; letter-spacing: 0.04em;
+      line-height: 1.1; color: var(--ink);
+    }
+    .hp-board-stats { font-size: 11px; color: var(--dim); letter-spacing: 0.04em; }
+    .hp-board-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11px; color: var(--dim2);
+    }
+    .hp-play-link {
+      font-family: 'Anton', sans-serif; font-size: 12px; letter-spacing: 0.14em;
+    }
+
+    /* Footer */
+    .hp-footer {
+      padding: 14px 48px; display: flex; justify-content: space-between;
+      align-items: center; font-size: 11px; color: var(--dim2); letter-spacing: 0.1em;
+      border-top: 1px solid var(--line);
+    }
+
+    /* Auth modal */
+    .hp-modal-overlay {
+      position: fixed; inset: 0; background: rgba(14,11,34,0.85);
+      backdrop-filter: blur(6px); z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .hp-modal-overlay.hidden { display: none; }
+    .hp-modal {
+      background: var(--bg2); border: 1px solid var(--line2);
+      border-radius: 18px; padding: 32px 36px; width: 100%; max-width: 480px;
+      position: relative;
+    }
+    .hp-modal-close {
+      position: absolute; top: 16px; right: 16px;
+      background: transparent !important; border: none !important;
+      color: var(--dim) !important; font-size: 20px !important;
+      padding: 4px 8px !important; box-shadow: none !important;
+      cursor: pointer !important;
+    }
+    .hp-modal-close:hover { color: var(--ink) !important; transform: none !important; box-shadow: none !important; }
+    .hp-modal-title {
+      font-family: 'Anton', sans-serif; font-size: 24px; letter-spacing: 0.04em;
+      margin-bottom: 22px; color: var(--ink);
+    }
+    .hp-modal-tabs { display: flex; gap: 6px; margin-bottom: 20px; }
+    .hp-modal-tab {
+      padding: 7px 16px !important; border-radius: 8px !important;
+      background: transparent !important; border: 1px solid transparent !important;
+      color: var(--dim) !important; font-family: 'Anton', sans-serif !important;
+      font-size: 12px !important; letter-spacing: 0.14em !important;
+      cursor: pointer !important; box-shadow: none !important;
+      transition: color .15s !important;
+    }
+    .hp-modal-tab:hover { color: var(--ink) !important; transform: none !important; box-shadow: none !important; }
+    .hp-modal-tab.active {
+      background: var(--bg3) !important; color: var(--gold) !important;
+      border-color: var(--line2) !important;
+    }
+    .hp-form { display: flex; flex-direction: column; gap: 12px; }
+    .hp-form input {
+      width: 100%; background: var(--bg); border: 1px solid var(--line2);
+      border-radius: 10px; color: var(--ink); font-size: 14px;
+      padding: 12px 14px; outline: none;
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    .hp-form input:focus { border-color: var(--gold); }
+    .hp-form-submit {
+      width: 100% !important; background: var(--gold) !important; color: #0E0B22 !important;
+      font-family: 'Anton', sans-serif !important; font-size: 16px !important;
+      letter-spacing: 0.1em !important; padding: 14px !important;
+      border-radius: 10px !important; border: none !important;
+      box-shadow: none !important; margin-top: 4px !important;
+    }
+    .hp-form-submit:hover { filter: brightness(1.08) !important; transform: none !important; box-shadow: none !important; }
+    .hp-auth-msg { font-size: 12px; color: var(--red); text-align: center; min-height: 1em; }
+
+    /* Empty boards state */
+    .hp-boards-empty {
+      grid-column: 1 / -1; padding: 48px 24px; text-align: center;
+      background: var(--bg2); border-radius: 14px; border: 1.5px dashed var(--line2);
+    }
+    .hp-boards-empty-title {
+      font-family: 'Anton', sans-serif; font-size: 18px; color: var(--dim);
+      letter-spacing: 0.04em; margin-bottom: 8px;
+    }
+    .hp-boards-empty-sub { font-size: 13px; color: var(--dim2); }
+    .hp-signin-prompt {
+      grid-column: 1 / -1; padding: 48px 24px; text-align: center;
+    }
+    .hp-signin-prompt-title {
+      font-family: 'Anton', sans-serif; font-size: 20px; color: var(--dim);
+      letter-spacing: 0.04em; margin-bottom: 12px;
+    }
+  </style>
 </head>
 <body>
-  <main class="page">
-    <!-- Hero -->
-    <section class="hero">
-      <div class="logo">JEOPARTY</div>
-      <p class="tagline">Jackbox energy. Jeopardy brains. Your couch, your rules.</p>
-      <div style="margin-top:1.5rem; display:flex; gap:1rem; justify-content:center; flex-wrap:wrap;">
-        <a href="/join"><button class="accent" style="font-size:1.1rem; padding:.75rem 2rem;">Join a Game</button></a>
-        <a href="#host"><button class="secondary" style="font-size:1.1rem; padding:.75rem 2rem;">Host a Game</button></a>
+<div class="hp-page">
+
+  <!-- Nav -->
+  <nav class="hp-nav">
+    <div class="hp-nav-logo">
+      <span class="hp-brand">JEOPARTY</span>
+      <span class="hp-version">v0.4.2</span>
+    </div>
+    <div class="hp-nav-links">
+      <a href={host ? '/dashboard' : '#'}>Boards</a>
+      <a href="#how">How it works</a>
+      <a href="https://github.com/alec-jensen/jeoparty" target="_blank" rel="noopener">GitHub</a>
+      {host
+        ? <a href="/api/auth/logout" style="color:var(--dim);font-size:14px;">Log Out</a>
+        : <button class="hp-signin-btn" id="openAuthBtn">SIGN IN</button>
+      }
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hp-hero">
+    <!-- Left column -->
+    <div class="hp-hero-left">
+      <div class="hp-pill">
+        <span class="hp-pill-dot"></span>
+        SELF-HOSTED · OPEN SOURCE · NO ACCOUNTS
       </div>
-    </section>
+      <h1 class="hp-h1">TRIVIA NIGHT,<br/><span class="hp-h1-gold">YOUR LIVING&nbsp;ROOM.</span></h1>
+      <p class="hp-sub">
+        Build a board in five minutes, beam it to the TV, and let everyone
+        buzz in from their phone. No installs. No accounts. No ads on the
+        big game-show buzzer in your friend's hand.
+      </p>
+    </div>
 
-    <!-- How it works -->
-    <section class="grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:1rem; margin-top:2rem;">
-      <article class="card grid" style="text-align:center;">
-        <div style="font-size:2.5rem;">📺</div>
-        <h3>Big Screen</h3>
-        <p class="small">Open the game on your TV or projector. It auto-scales to fill any screen like Jackbox.</p>
-      </article>
-      <article class="card grid" style="text-align:center;">
-        <div style="font-size:2.5rem;">📱</div>
-        <h3>Phone Buzzers</h3>
-        <p class="small">Players join from their phones — no app install. Scan a QR code or enter the 4-letter game code.</p>
-      </article>
-      <article class="card grid" style="text-align:center;">
-        <div style="font-size:2.5rem;">🎮</div>
-        <h3>Host Controls</h3>
-        <p class="small">The host controls the game from their phone or a separate window — judge answers, manage scores, run Final Jeopardy.</p>
-      </article>
-      <article class="card grid" style="text-align:center;">
-        <div style="font-size:2.5rem;">🏆</div>
-        <h3>Custom Boards</h3>
-        <p class="small">Build your own categories and questions. Multiple rounds, Daily Doubles, Final Jeopardy — all included.</p>
-      </article>
-    </section>
+    <!-- Right column -->
+    <div class="hp-hero-right">
+      <!-- Host card -->
+      <div class="hp-host-card">
+        <div class="hp-host-lbl">HOST A GAME</div>
+        <div class="hp-host-title">START A ROOM</div>
+        <p class="hp-host-desc">
+          Pick a board, cast to your TV, and share the 4-letter code with
+          your friends. The host runs the show from their phone.
+        </p>
+        <div class="hp-host-actions">
+          <button class="hp-new-room-btn" id="newRoomBtn">NEW ROOM →</button>
+          <span class="hp-resume">or resume last game</span>
+        </div>
+      </div>
 
-    <!-- Auth forms -->
-    <section id="host" class="card grid" style="max-width:680px; margin:2.5rem auto 0;">
-      <h2 style="text-align:center;">Host Sign In</h2>
-      <div class="grid" style="grid-template-columns:1fr 1fr; gap:1.5rem;">
-        <form id="loginForm" class="grid">
-          <h3>Log In</h3>
-          <input name="email" type="email" placeholder="email@example.com" required autocomplete="email" />
-          <input name="password" type="password" placeholder="Password" required autocomplete="current-password" />
-          <button type="submit">Log In</button>
-        </form>
-        {!disableReg && (
-          <form id="registerForm" class="grid">
-            <h3>Create Account</h3>
-            <input name="email" type="email" placeholder="email@example.com" required autocomplete="email" />
-            <input name="password" type="password" placeholder="Password (min 6 chars)" minlength="6" required autocomplete="new-password" />
-            <button type="submit" class="secondary">Register</button>
-          </form>
-        )}
-        {disableReg && (
-          <div class="card" style="display:flex;align-items:center;justify-content:center;opacity:.6;">
-            <p class="small">Registration is disabled on this server.</p>
+      <!-- Join card -->
+      <div class="hp-join-card">
+        <div class="hp-join-lbl">JOIN A GAME</div>
+        <div class="hp-join-row">
+          <div class="hp-code-wrap">
+            <input id="codeInput" class="hp-code-input" maxlength="4" autocomplete="off" spellcheck="false" />
+            <div class="hp-code-boxes" id="codeBoxes">
+              <div class="hp-code-box empty" id="cb0">&nbsp;</div>
+              <div class="hp-code-box empty" id="cb1">&nbsp;</div>
+              <div class="hp-code-box empty" id="cb2">&nbsp;</div>
+              <div class="hp-code-box empty" id="cb3">&nbsp;</div>
+            </div>
           </div>
-        )}
+          <button class="hp-join-btn" id="joinGoBtn">JOIN →</button>
+        </div>
+        <p class="hp-join-note">Players don't need to install anything — open the code on any phone.</p>
       </div>
-      <p id="authMsg" class="small" style="text-align:center; min-height:1.2em;"></p>
-    </section>
-  </main>
+    </div>
+  </section>
 
-  <script is:inline>
-    // @ts-nocheck
-    const msg = document.getElementById('authMsg');
-    const params = new URLSearchParams(location.search);
-    const nextUrl = params.get('next') || '/dashboard';
-    function wire(formId, url, redirect) {
-      const form = document.getElementById(formId);
-      if (!form) return;
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        msg.textContent = '';
-        const body = Object.fromEntries(new FormData(form).entries());
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        if (res.ok) { location.href = redirect; return; }
-        const json = await res.json().catch(() => ({}));
-        msg.textContent = json.error || 'Request failed.';
-        msg.style.color = 'var(--bad)';
-      });
-    }
-    wire('loginForm', '/api/auth/login', nextUrl);
-    wire('registerForm', '/api/auth/register', '/dashboard');
-  </script>
+  <!-- Your boards -->
+  <section class="hp-boards" id="how">
+    <div class="hp-boards-hdr">
+      <h2 class="hp-boards-title">YOUR BOARDS</h2>
+      <div class="hp-boards-actions">
+        <a href="#" class="hp-browse-link">BROWSE COMMUNITY →</a>
+        {host
+          ? <button class="hp-new-board-btn" id="newBoardBtn">+ NEW BOARD</button>
+          : null
+        }
+      </div>
+    </div>
+    <div class="hp-boards-grid">
+      {!host && (
+        <div class="hp-signin-prompt">
+          <div class="hp-signin-prompt-title">SIGN IN TO SEE YOUR BOARDS</div>
+          <button class="hp-new-room-btn" id="openAuthBtn2" style="display:inline-block;">SIGN IN →</button>
+        </div>
+      )}
+      {host && boards.length === 0 && (
+        <div class="hp-boards-empty">
+          <div class="hp-boards-empty-title">NO BOARDS YET</div>
+          <div class="hp-boards-empty-sub">Create your first board to get started.</div>
+        </div>
+      )}
+      {host && boards.map((b, i) => {
+        const accent = ACCENT_COLORS[i % ACCENT_COLORS.length];
+        return (
+          <a href={`/boards/${b.id}`} class="hp-board-card" style={`--card-accent:${accent};border-color:${i===0?accent:'var(--line)'}`}>
+            <div class="hp-board-mini">
+              {Array.from({length:5}).map((_) => (
+                <div class="hp-mini-hdr" style={`background:${accent}`}></div>
+              ))}
+              {Array.from({length:20}).map((_, j) => (
+                j % 3 === 0
+                  ? <div class="hp-mini-empty"></div>
+                  : <div class="hp-mini-cell"></div>
+              ))}
+            </div>
+            <div class="hp-board-name">{b.title.toUpperCase()}</div>
+            <div class="hp-board-stats">1 round · 30 clues</div>
+            <div class="hp-board-footer">
+              <span>{timeAgo(b.updatedAt)}</span>
+              <span class="hp-play-link" style={`color:${accent}`}>PLAY →</span>
+            </div>
+          </a>
+        );
+      })}
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="hp-footer">
+    <span>SELF-HOSTED · DEPLOY IN ONE COMMAND · MIT LICENSED</span>
+    <span>JEOPARTY IS A FAN PROJECT · NOT AFFILIATED WITH ANY GAME SHOW</span>
+  </footer>
+</div>
+
+<!-- Auth modal -->
+<div id="authModal" class="hp-modal-overlay hidden">
+  <div class="hp-modal">
+    <button class="hp-modal-close" id="closeAuthBtn">✕</button>
+    <div class="hp-modal-title">WELCOME BACK</div>
+    <div class="hp-modal-tabs">
+      <button class="hp-modal-tab active" data-tab="login">LOG IN</button>
+      {!disableReg && <button class="hp-modal-tab" data-tab="register">CREATE ACCOUNT</button>}
+    </div>
+    <form id="loginForm" class="hp-form">
+      <input name="email" type="email" placeholder="email@example.com" required autocomplete="email" />
+      <input name="password" type="password" placeholder="Password" required autocomplete="current-password" />
+      <button type="submit" class="hp-form-submit">LOG IN →</button>
+    </form>
+    {!disableReg && (
+      <form id="registerForm" class="hp-form" style="display:none">
+        <input name="email" type="email" placeholder="email@example.com" required autocomplete="email" />
+        <input name="password" type="password" placeholder="Password (min 6 chars)" minlength="6" required autocomplete="new-password" />
+        <button type="submit" class="hp-form-submit">CREATE ACCOUNT →</button>
+      </form>
+    )}
+    <p id="authMsg" class="hp-auth-msg"></p>
+  </div>
+</div>
+
+<script is:inline>
+  // @ts-nocheck
+  const params = new URLSearchParams(location.search);
+  const nextUrl = params.get('next') || '/dashboard';
+
+  // Code boxes
+  const codeInput = document.getElementById('codeInput');
+  const cbs = [0,1,2,3].map(i => document.getElementById(`cb${i}`));
+  function updateBoxes() {
+    const v = (codeInput.value || '').toUpperCase().replace(/[^A-Z]/g,'').slice(0,4);
+    codeInput.value = v;
+    cbs.forEach((cb, i) => {
+      if (cb) {
+        cb.textContent = v[i] || ' ';
+        cb.classList.toggle('empty', !v[i]);
+      }
+    });
+  }
+  if (codeInput) {
+    codeInput.addEventListener('input', updateBoxes);
+    document.getElementById('codeBoxes')?.addEventListener('click', () => codeInput.focus());
+    document.getElementById('joinGoBtn')?.addEventListener('click', () => {
+      const code = (codeInput.value || '').toUpperCase().trim();
+      if (code.length === 4) location.href = `/join?code=${code}`;
+      else { codeInput.focus(); }
+    });
+  }
+
+  // New board
+  document.getElementById('newBoardBtn')?.addEventListener('click', async () => {
+    const res = await fetch('/api/boards', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ title: 'New Jeoparty Board' }) });
+    if (res.ok) { const b = await res.json(); location.href = `/boards/${b.id}`; }
+  });
+
+  // New room (non-logged-in: open auth; logged-in: dashboard)
+  document.getElementById('newRoomBtn')?.addEventListener('click', () => {
+    const isLoggedIn = document.getElementById('newBoardBtn') !== null;
+    if (isLoggedIn) location.href = '/dashboard';
+    else openModal();
+  });
+
+  // Auth modal
+  const modal = document.getElementById('authModal');
+  function openModal() { modal?.classList.remove('hidden'); }
+  function closeModal() { modal?.classList.add('hidden'); }
+  document.getElementById('openAuthBtn')?.addEventListener('click', openModal);
+  document.getElementById('openAuthBtn2')?.addEventListener('click', openModal);
+  document.getElementById('closeAuthBtn')?.addEventListener('click', closeModal);
+  modal?.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  // Modal tabs
+  document.querySelectorAll('.hp-modal-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.hp-modal-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const which = tab.dataset.tab;
+      const lf = document.getElementById('loginForm');
+      const rf = document.getElementById('registerForm');
+      if (lf) lf.style.display = which === 'login' ? '' : 'none';
+      if (rf) rf.style.display = which === 'register' ? '' : 'none';
+      document.getElementById('authMsg').textContent = '';
+    });
+  });
+
+  // Auth forms
+  const msg = document.getElementById('authMsg');
+  function wireForm(formId, url, redirect) {
+    const form = document.getElementById(formId);
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (msg) msg.textContent = '';
+      const body = Object.fromEntries(new FormData(form).entries());
+      const res = await fetch(url, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
+      if (res.ok) { location.href = redirect; return; }
+      const json = await res.json().catch(() => ({}));
+      if (msg) { msg.textContent = json.error || 'Request failed.'; }
+    });
+  }
+  wireForm('loginForm', '/api/auth/login', nextUrl);
+  wireForm('registerForm', '/api/auth/register', '/dashboard');
+</script>
 </body>
 </html>

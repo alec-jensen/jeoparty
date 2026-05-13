@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'astro';
 import { runAuth, requireHost } from '@/middleware/auth';
+import { initDb } from '@/lib/db';
 
 // Simple in-memory rate limiter (per IP, sliding window)
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();

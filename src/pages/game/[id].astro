@@ -1,5 +1,4 @@
 ---
-// Presenter view — shown on the big screen. No auth required.
 import '@/styles/global.css';
 import QRCode from 'qrcode';
 import { db, schema } from '@/lib/db';
@@ -11,14 +10,14 @@ const gameRows = await db.select({ id: schema.games.id, status: schema.games.sta
 if (!gameRows.length) return Astro.redirect('/');
 
 const joinUrl = `${Astro.url.origin}/join?code=${gameId}`;
-const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c518', light: '#0d0a1e' }, margin: 1 });
+const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC83D', light: '#0E0B22' }, margin: 1 });
 ---
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Jeoparty — {gameId}</title>
   <style>
-    html, body { height: 100%; overflow: hidden; background: #0d0a1e; }
+    html, body { height: 100%; overflow: hidden; background: #0E0B22; }
     #scale-root { transform-origin: top left; }
   </style>
 </head>
@@ -27,9 +26,9 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c
 
     <!-- Lobby screen (before game starts) -->
     <div id="lobbyScreen" style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2rem;">
-      <div style="font-family:'Fredoka',sans-serif; font-size:7rem; font-weight:700; background:linear-gradient(135deg,#f5c518,#ff4fa3); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; line-height:1;">JEOPARTY</div>
+      <div style="font-family:'Anton',sans-serif; font-size:7rem; font-weight:700; background:linear-gradient(135deg,#FFC83D,#FF3D8E); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; line-height:1;">JEOPARTY</div>
       <div class="join-code">{gameId}</div>
-      <p style="font-family:'Fredoka',sans-serif; font-size:1.6rem; color:var(--muted);">Go to <strong style="color:var(--text);">{Astro.url.host}/join</strong> and enter the code above</p>
+      <p style="font-family:'Anton',sans-serif; font-size:1.6rem; color:var(--muted);">Go to <strong style="color:var(--text);">{Astro.url.host}/join</strong> and enter the code above</p>
       <div set:html={qrSvg} style="width:220px; height:220px;" />
       <div id="playerList" style="display:flex; gap:1rem; flex-wrap:wrap; justify-content:center; max-width:1200px; margin-top:0.5rem;"></div>
     </div>
@@ -38,8 +37,8 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c
     <div id="gameScreen" class="hidden" style="height:100%; display:flex; flex-direction:column; padding:24px; gap:16px;">
       <!-- Header: title + scores -->
       <div style="display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
-        <div style="font-family:'Fredoka',sans-serif; font-size:2.2rem; font-weight:700; color:var(--accent);" id="gameTitle">Jeoparty</div>
-        <div id="roundBadge" style="font-family:'Fredoka',sans-serif; font-size:1.2rem; color:var(--muted);"></div>
+        <div style="font-family:'Anton',sans-serif; font-size:2.2rem; font-weight:700; color:var(--accent);" id="gameTitle">Jeoparty</div>
+        <div id="roundBadge" style="font-family:'Anton',sans-serif; font-size:1.2rem; color:var(--muted);"></div>
         <div id="presenterScores" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap;"></div>
       </div>
       <!-- Board -->
@@ -56,8 +55,8 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c
 
     <!-- Round advance notification -->
     <div id="roundNotif" class="hidden" style="position:absolute;inset:0;background:rgba(10,5,30,0.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:50;animation:slide-up .3s ease;">
-      <div style="font-family:'Fredoka',sans-serif;font-size:3rem;color:var(--muted);">Next Up</div>
-      <div id="roundNotifTitle" style="font-family:'Fredoka',sans-serif;font-size:6rem;font-weight:700;color:var(--accent);"></div>
+      <div style="font-family:'Anton',sans-serif;font-size:3rem;color:var(--muted);">Next Up</div>
+      <div id="roundNotifTitle" style="font-family:'Anton',sans-serif;font-size:6rem;font-weight:700;color:var(--accent);"></div>
     </div>
 
     <!-- Host controls link (corner) -->
@@ -69,11 +68,15 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c
     /* ── Scaling ───────────────────────────────────────────────────────────── */
     function scale() {
       const root = document.getElementById('scale-root');
-      const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
-      root.style.transform = `scale(${s})`;
-      document.body.style.width = '1920px';
-      document.body.style.height = '1080px';
-      document.body.style.overflow = 'hidden';
+      const tw = 1920; const th = 1080;
+      const s = Math.min(window.innerWidth / tw, window.innerHeight / th);
+      root.style.width = tw + 'px';
+      root.style.height = th + 'px';
+      root.style.transform = `scale(${s}) translate(-50%, -50%)`;
+      root.style.left = '50%';
+      root.style.top = '50%';
+      root.style.position = 'absolute';
+      root.style.transformOrigin = 'top left';
     }
     scale();
     window.addEventListener('resize', scale);
