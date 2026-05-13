@@ -5,7 +5,7 @@ const {
   HostMobile, HostMobileTeam,
   PlayerJoin, PlayerBuzzer, PlayerBuzzed,
   PlayerJoinTeam, PlayerBuzzerTeam, PlayerBuzzedTeam,
-  Homepage, BoardEditor,
+  Homepage, BoardEditor, HostDashboard,
 } = window.JP;
 
 function App() {
@@ -18,6 +18,13 @@ function App() {
         </DCArtboard>
         <DCArtboard id="editor" label="Board editor · Editing $600 clue" width={1440} height={900}>
           <BoardEditor/>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="dashboard" title="Host dashboard"
+        subtitle="1440 × 960 · Library + spotlight + launch panel. Browse boards and start a game with one selected">
+        <DCArtboard id="host-dashboard" label="Host dashboard · Party Mix selected, ready to launch" width={1440} height={960}>
+          <HostDashboard/>
         </DCArtboard>
       </DCSection>
 

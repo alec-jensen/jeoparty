@@ -71,12 +71,13 @@ const seed = {
       <div style="font-family:'Fredoka',sans-serif; font-size:1.8rem; font-weight:700; color:var(--accent);">
         Host Controls — <span style="color:var(--text);">{gameId}</span>
       </div>
-      <div class="flex" style="gap:.5rem; flex-wrap:wrap;">
+      <div class="flex" style="gap:.5rem; flex-wrap:wrap; align-items:center;">
+        <span id="wsStatus" style="font-size:.7rem; padding:.2rem .5rem; border-radius:4px; background:var(--bg3); color:var(--dim); margin-right:.5rem;">CONNECTING...</span>
         <a href={`/game/${gameId}`} target="_blank"><button class="secondary" style="font-size:.85rem;">📺 Presenter View</button></a>
-        <button id="startGame" class="accent">▶ Start Game</button>
-        <button id="startFinal" class="secondary">🏁 Final Jeopardy</button>
-        <button id="nextRound" class="secondary">→ Next Round</button>
-        <button id="endGame" class="secondary" style="color:var(--bad);">■ End Game</button>
+        <button id="startGame" class="accent control-btn" disabled>▶ Start Game</button>
+        <button id="startFinal" class="secondary control-btn" disabled>🏁 Final Jeopardy</button>
+        <button id="nextRound" class="secondary control-btn" disabled>→ Next Round</button>
+        <button id="endGame" class="secondary control-btn" style="color:var(--bad);" disabled>■ End Game</button>
       </div>
     </div>
 
@@ -153,24 +154,73 @@ const seed = {
     }
 
     /* ── WebSocket ──────────────────────────────────────────────────────── */
-    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}&token=${encodeURIComponent(hostToken)}`;
-    const ws = new WebSocket(wsUrl);
-    ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'PING' })));
+    let ws;
+    function connect() {
+      const wsStatus = document.getElementById('wsStatus');
+      const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}&token=${encodeURIComponent(hostToken)}`;
+      console.log('[WS] Connecting to', wsUrl);
+      ws = new WebSocket(wsUrl);
+      ws.addEventListener('open', () => {
+        console.log('[WS] Connected');
+        wsStatus.textContent = 'CONNECTED';
+        wsStatus.style.color = 'var(--ok)';
+        document.querySelectorAll('.control-btn').forEach(b => b.disabled = false);
+        ws.send(JSON.stringify({ type: 'PING' }));
+        // Heartbeat
+        setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'PING' })); }, 30000);
+      });
+      ws.addEventListener('close', () => { 
+        console.warn('[WS] Disconnected');
+        wsStatus.textContent = 'DISCONNECTED';
+        wsStatus.style.color = 'var(--bad)';
+        document.querySelectorAll('.control-btn').forEach(b => b.disabled = true);
+        setTimeout(connect, 2000); 
+      });
+      ws.addEventListener('error', (e) => console.error('[WS] Error:', e));
+      ws.addEventListener('message', onMessage);
+    }
+    connect();
 
-    ws.addEventListener('message', (event) => {
+    function onMessage(event) {
       const msg = JSON.parse(event.data);
 
+      if (msg.type === 'PONG') { /* connection alive */ }
+
       if (msg.type === 'PLAYER_JOINED') {
-        players.set(msg.playerId, { id: msg.playerId, displayName: msg.displayName, score: 0, teamId: msg.teamId ?? null });
-        if (msg.teamId != null && teams.has(msg.teamId)) teams.get(msg.teamId).playerIds.push(msg.playerId);
+        const existing = players.get(msg.playerId);
+        players.set(msg.playerId, { 
+          id: msg.playerId, 
+          displayName: msg.displayName, 
+          score: msg.score ?? (existing?.score ?? 0), 
+          teamId: msg.teamId ?? (existing?.teamId ?? null) 
+        });
+        if (msg.teamId != null && teams.has(msg.teamId)) {
+          const t = teams.get(msg.teamId);
+          if (!t.playerIds.includes(msg.playerId)) t.playerIds.push(msg.playerId);
+        }
         renderPlayers();
       }
       if (msg.type === 'PLAYER_KICKED') { players.delete(msg.playerId); renderPlayers(); }
 
       if (msg.type === 'SCORE_UPDATE' || msg.type === 'BOARD_STATE') {
-        (msg.scores || []).forEach((s) => { const p = players.get(s.playerId); if (p) p.score = s.score; });
-        (msg.usedQuestions || []).forEach((id) => usedSet.add(id));
+        if (msg.scores) {
+          msg.scores.forEach((s) => {
+            if (!players.has(s.playerId)) {
+              players.set(s.playerId, { id: s.playerId, displayName: s.displayName || 'Player', score: s.score, teamId: s.teamId ?? null });
+            } else {
+              players.get(s.playerId).score = s.score;
+            }
+          });
+        }
+        if (msg.usedQuestions) {
+          usedSet = new Set(msg.usedQuestions);
+        }
         if (msg.currentRound != null) currentRound = msg.currentRound;
+        if (msg.status === 'active' || msg.status === 'final_jeopardy' || msg.status === 'finished') {
+          document.getElementById('startGame').style.display = 'none';
+        } else {
+          document.getElementById('startGame').style.display = '';
+        }
         renderPlayers();
         renderBoard();
         updateRoundLabel();
@@ -206,12 +256,18 @@ const seed = {
         document.getElementById('judgeButtons').innerHTML = '';
       }
 
+      if (msg.type === 'BUZZ_WINNER') {
+        const p = players.get(msg.playerId);
+        document.getElementById('questionText').innerHTML = `<span style="color:var(--accent); font-weight:bold;">🎤 ${p?.displayName ?? 'Player'} buzzed in!</span><br/>` + (openQuestion?.questionText || '');
+        renderJudgeButtons(msg.playerId);
+      }
+
       if (msg.type === 'FINAL_JEOPARDY_REVEAL' && Array.isArray(msg.results)) {
         finalResults = msg.results;
         document.getElementById('finalPanel').style.display = '';
         renderFinalList();
       }
-    });
+    }
 
     /* ── Render board ───────────────────────────────────────────────────── */
     function renderBoard() {
@@ -289,24 +345,32 @@ const seed = {
     }
 
     /* ── Judge buttons ──────────────────────────────────────────────────── */
-    function renderJudgeButtons() {
+    function renderJudgeButtons(activeId = null) {
       const el = document.getElementById('judgeButtons');
       el.innerHTML = '';
-      for (const [id, p] of players) {
+      const sorted = [...players.values()].sort((a, b) => b.score - a.score);
+      for (const p of sorted) {
+        const isActive = p.id === activeId;
         const row = document.createElement('div');
         row.style.display = 'flex';
         row.style.gap = '.4rem';
         row.style.alignItems = 'center';
-        row.innerHTML = `<span style="min-width:100px;font-size:.95rem;">${p.displayName}</span>`;
+        row.style.padding = '4px';
+        row.style.borderRadius = '8px';
+        if (isActive) row.style.background = 'rgba(255, 200, 61, 0.1)';
+        
+        row.innerHTML = `<span style="min-width:100px;font-size:.95rem;${isActive ? 'color:var(--accent);font-weight:bold;' : ''}">${p.displayName}</span>`;
         const ok = document.createElement('button');
         ok.textContent = '✓ Correct';
         ok.style.fontSize = '.85rem';
-        ok.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: id, correct: true })));
+        if (isActive) ok.className = 'accent';
+        ok.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: p.id, correct: true })));
+        
         const bad = document.createElement('button');
         bad.textContent = '✗ Wrong';
         bad.className = 'secondary';
         bad.style.fontSize = '.85rem';
-        bad.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: id, correct: false })));
+        bad.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: p.id, correct: false })));
         row.append(ok, bad);
         el.appendChild(row);
       }

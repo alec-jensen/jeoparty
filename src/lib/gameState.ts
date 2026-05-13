@@ -1,5 +1,5 @@
 import { eq, inArray, and } from 'drizzle-orm';
-import { db, schema, isSqlite } from '@/lib/db';
+import { db, schema, isSqlite } from './db';
 
 export interface QuestionData {
   id: number;
@@ -262,8 +262,8 @@ export function boardState(game: ActiveGame) {
     scores: scoreList(game),
     teams: teamList(game),
     currentPicker: game.currentPicker,
-    currentRound: game.currentRound,
     totalRounds: game.board.rounds.length,
     teamMode: game.teamMode,
+    status: game.status,
   };
 }

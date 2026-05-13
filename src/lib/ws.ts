@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { eq } from 'drizzle-orm';
-import { db, schema } from '@/lib/db';
+import { db, schema } from './db';
 import {
   boardState,
   getOrCreateGame,
@@ -13,8 +13,8 @@ import {
   setGameStatus,
   currentRoundCategories,
   type ActiveGame,
-} from '@/lib/gameState';
-import { verifyHostToken, verifyPlayerToken } from '@/lib/auth';
+} from './gameState';
+import { verifyHostToken, verifyPlayerToken } from './auth';
 
 type SocketMeta = {
   socketId: string;
@@ -218,7 +218,12 @@ export function initWebSockets(server: import('node:http').Server) {
 
     if (meta.role === 'player' && meta.playerId) {
       const p = game.players.get(meta.playerId);
-      broadcast(game, 'PLAYER_JOINED', { playerId: meta.playerId, displayName: p?.displayName ?? 'Player', teamId: p?.teamId ?? null });
+      broadcast(game, 'PLAYER_JOINED', { 
+        playerId: meta.playerId, 
+        displayName: p?.displayName ?? 'Player', 
+        score: p?.score ?? 0,
+        teamId: p?.teamId ?? null 
+      });
     }
 
     ws.on('message', async (raw) => {

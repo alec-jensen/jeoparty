@@ -5,8 +5,23 @@ import { db, schema, insertReturningId } from '@/lib/db';
 import { eq, and } from 'drizzle-orm';
 
 const jwtSecret: string = (() => {
-  const value = import.meta.env.JWT_SECRET || (typeof process !== 'undefined' ? process.env.JWT_SECRET : undefined);
-  if (!value) throw new Error('JWT_SECRET is required');
+  let value: string | undefined;
+  try {
+    // @ts-ignore
+    value = import.meta.env?.JWT_SECRET;
+  } catch {}
+  
+  if (!value && typeof process !== 'undefined') {
+    value = process.env.JWT_SECRET;
+  }
+  
+  if (!value) {
+    // Provide a fallback for development if not set
+    if (typeof process !== 'undefined' && process.env.NODE_ENV === 'development') {
+      return 'dev-secret-keep-it-safe';
+    }
+    throw new Error('JWT_SECRET environment variable is required');
+  }
   return value;
 })();
 

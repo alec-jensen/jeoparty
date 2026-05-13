@@ -17,8 +17,9 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
   <meta charset="utf-8" />
   <title>Jeoparty — {gameId}</title>
   <style>
-    html, body { height: 100%; overflow: hidden; background: #0E0B22; }
+    html, body { height: 100%; overflow: hidden; background: #0E0B22; margin: 0; }
     #scale-root { transform-origin: top left; }
+    #conn-status { position: absolute; bottom: 10px; right: 10px; font-size: 0.7rem; color: #333; z-index: 100; opacity: 0.3; }
   </style>
 </head>
 <body>
@@ -61,6 +62,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
 
     <!-- Host controls link (corner) -->
     <a href={`/game/${gameId}/host`} style="position:absolute;top:16px;right:16px;font-size:0.8rem;color:var(--muted);opacity:0.4;" title="Host Controls">⚙ Host</a>
+    <div id="conn-status">CONNECTING...</div>
   </div>
 
   <script is:inline define:vars={{ gameId }}>
@@ -68,14 +70,17 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     /* ── Scaling ───────────────────────────────────────────────────────────── */
     function scale() {
       const root = document.getElementById('scale-root');
+      if (!root) return;
       const tw = 1920; const th = 1080;
-      const s = Math.min(window.innerWidth / tw, window.innerHeight / th);
+      const s = Math.min(window.innerWidth / tw, window.innerHeight / th) || 1;
       root.style.width = tw + 'px';
       root.style.height = th + 'px';
-      root.style.transform = `scale(${s}) translate(-50%, -50%)`;
+      root.style.transform = `scale(${s})`;
+      root.style.position = 'absolute';
       root.style.left = '50%';
       root.style.top = '50%';
-      root.style.position = 'absolute';
+      root.style.marginLeft = `-${(tw * s) / 2}px`;
+      root.style.marginTop = `-${(th * s) / 2}px`;
       root.style.transformOrigin = 'top left';
     }
     scale();
@@ -101,16 +106,25 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     let ws;
     function connect() {
       ws = new WebSocket(wsUrl);
-      ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'PING' })));
+      ws.addEventListener('open', () => {
+        ws.send(JSON.stringify({ type: 'PING' }));
+        // Heartbeat
+        setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'PING' })); }, 30000);
+      });
       ws.addEventListener('close', () => setTimeout(connect, 2000));
       ws.addEventListener('message', onMessage);
     }
     connect();
 
     function onMessage(event) {
+      const status = document.getElementById('conn-status');
       const msg = JSON.parse(event.data);
 
-      if (msg.type === 'PONG') { offset = msg.serverTime - Date.now(); }
+      if (msg.type === 'PONG') { 
+        offset = msg.serverTime - Date.now();
+        if (status) status.textContent = 'CONNECTED';
+        return;
+      }
 
       if (msg.type === 'BOARD_STATE') {
         gameState.board = msg.board;
@@ -121,6 +135,15 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         gameState.currentRound = msg.currentRound ?? 0;
         gameState.totalRounds = msg.totalRounds ?? 1;
         gameState.teamMode = msg.teamMode ?? false;
+        
+        if (msg.status === 'active' || msg.status === 'final_jeopardy' || msg.status === 'finished') {
+          lobbyScreen.classList.add('hidden');
+          gameScreen.classList.remove('hidden');
+        } else {
+          lobbyScreen.classList.remove('hidden');
+          gameScreen.classList.add('hidden');
+        }
+
         renderBoard();
         renderScores();
         updateRoundBadge();
