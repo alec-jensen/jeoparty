@@ -1,12 +1,16 @@
 import type { APIContext } from 'astro';
 import { HOST_COOKIE, verifyHostToken } from '@/lib/auth';
 
-const protectedPrefixes = ['/dashboard', '/boards', '/game', '/api/boards', '/api/games/create'];
+const protectedPrefixes = ['/dashboard', '/boards', '/api/boards', '/api/games/create'];
 
 function requiresHost(pathname: string) {
+  // Game host controls require auth; presenter and player views do not
+  if (pathname.startsWith('/game/') && pathname.endsWith('/host')) return true;
   if (pathname.startsWith('/game/') && pathname.endsWith('/play')) return false;
+  if (pathname.startsWith('/game/') && !pathname.endsWith('/host')) return false;
   if (pathname.startsWith('/api/games/') && pathname.endsWith('/join')) return false;
   if (pathname.startsWith('/api/auth')) return false;
+  if (pathname === '/join') return false;
   return protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'));
 }
 

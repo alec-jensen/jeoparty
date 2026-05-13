@@ -1,0 +1,365 @@
+---
+// Host controls — requires auth matching the game's host
+import '@/styles/global.css';
+import QRCode from 'qrcode';
+import { HOST_COOKIE } from '@/lib/auth';
+import { db, schema } from '@/lib/db';
+import { eq, inArray } from 'drizzle-orm';
+
+if (!Astro.locals.host) return Astro.redirect(`/?next=/game/${Astro.params.id}/host`);
+
+const gameId = String(Astro.params.id).toUpperCase();
+const gameRows = await db.select().from(schema.games).where(eq(schema.games.id, gameId));
+if (!gameRows.length || gameRows[0].hostId !== Astro.locals.host.hostId) return Astro.redirect('/dashboard');
+
+const game = gameRows[0];
+const hostToken = Astro.cookies.get(HOST_COOKIE)?.value ?? '';
+
+const roundRows = await db.select().from(schema.rounds).where(eq(schema.rounds.boardId, game.boardId)).orderBy(schema.rounds.position);
+const categoryRows = roundRows.length
+  ? await db.select().from(schema.categories).where(inArray(schema.categories.roundId, roundRows.map(r => r.id))).orderBy(schema.categories.position)
+  : [];
+const questionRows = categoryRows.length
+  ? await db.select().from(schema.questions).where(inArray(schema.questions.categoryId, categoryRows.map(c => c.id))).orderBy(schema.questions.position)
+  : [];
+const usedRows = await db.select({ questionId: schema.usedQuestions.questionId }).from(schema.usedQuestions).where(eq(schema.usedQuestions.gameId, gameId));
+const playerRows = await db.select().from(schema.players).where(eq(schema.players.gameId, gameId));
+const teamRows = await db.select().from(schema.teams).where(eq(schema.teams.gameId, gameId));
+
+const questionsByCategory = new Map();
+for (const q of questionRows) {
+  const list = questionsByCategory.get(q.categoryId) ?? [];
+  list.push(q);
+  questionsByCategory.set(q.categoryId, list);
+}
+const categoriesByRound = new Map();
+for (const c of categoryRows) {
+  const list = categoriesByRound.get(c.roundId) ?? [];
+  list.push({ ...c, questions: questionsByCategory.get(c.id) ?? [] });
+  categoriesByRound.set(c.roundId, list);
+}
+const rounds = roundRows.map(r => ({ ...r, categories: categoriesByRound.get(r.id) ?? [] }));
+
+const joinUrl = `${Astro.url.origin}/join?code=${gameId}`;
+const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c518', light: '#0d0a1e' }, margin: 1 });
+
+const seed = {
+  rounds,
+  usedQuestionIds: usedRows.map(u => u.questionId),
+  initialPlayers: playerRows.map(p => [p.id, { id: p.id, displayName: p.displayName, score: p.score ?? 0, teamId: p.teamId ?? null }]),
+  initialTeams: teamRows.map(t => [t.id, { id: t.id, name: t.name, position: t.position, playerIds: [] }]),
+  teamMode: game.teamMode ?? false,
+  currentRound: game.currentRound ?? 0,
+};
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width" />
+  <title>Host Controls — {gameId}</title>
+  <style>
+    .host-panel { padding: 1rem; max-width: 1400px; margin: 0 auto; }
+    .two-col { display: grid; grid-template-columns: 1fr 360px; gap: 1rem; align-items: start; }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+    .answer-hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="host-panel">
+    <!-- Top bar -->
+    <div class="flex-between" style="padding:.75rem 0 1rem;">
+      <div style="font-family:'Fredoka',sans-serif; font-size:1.8rem; font-weight:700; color:var(--accent);">
+        Host Controls — <span style="color:var(--text);">{gameId}</span>
+      </div>
+      <div class="flex" style="gap:.5rem; flex-wrap:wrap;">
+        <a href={`/game/${gameId}`} target="_blank"><button class="secondary" style="font-size:.85rem;">📺 Presenter View</button></a>
+        <button id="startGame" class="accent">▶ Start Game</button>
+        <button id="startFinal" class="secondary">🏁 Final Jeopardy</button>
+        <button id="nextRound" class="secondary">→ Next Round</button>
+        <button id="endGame" class="secondary" style="color:var(--bad);">■ End Game</button>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <!-- Left: board + active question -->
+      <div class="grid">
+        <div class="card">
+          <div class="flex-between" style="margin-bottom:.75rem;">
+            <h3>Board</h3>
+            <div id="roundLabel" class="small"></div>
+          </div>
+          <div id="board" class="board-grid"></div>
+        </div>
+
+        <div class="card grid" id="questionPanel">
+          <h3>Active Question</h3>
+          <p id="questionText" class="muted" style="font-size:1.05rem;">No question open.</p>
+          <p id="answerText" class="answer-hidden" style="color:var(--ok); font-size:1.05rem;"></p>
+          <button id="toggleAnswer" class="secondary" style="width:fit-content;">Reveal Answer</button>
+          <div id="judgeButtons" class="grid" style="gap:.5rem;"></div>
+        </div>
+
+        <div class="card grid" id="finalPanel" style="display:none;">
+          <h3>Final Jeopardy Judging</h3>
+          <div id="finalList" class="grid"></div>
+        </div>
+      </div>
+
+      <!-- Right: players, QR, score adjust -->
+      <div class="grid" style="align-content:start;">
+        <div class="card grid">
+          <h3>Join Info</h3>
+          <div class="join-code" style="font-size:2.5rem; text-align:center;">{gameId}</div>
+          <div style="display:flex; justify-content:center;" set:html={qrSvg.replace(/width="\d+"/, 'width="160"').replace(/height="\d+"/, 'height="160"')} />
+          <p class="small" style="text-align:center;">{joinUrl}</p>
+        </div>
+
+        <div class="card grid">
+          <h3>Players <span id="playerCount" class="muted small"></span></h3>
+          <ul id="playerList" class="scores"></ul>
+        </div>
+
+        <div class="card grid" id="teamPanel" style="display:none;">
+          <h3>Teams</h3>
+          <div id="teamList" class="grid"></div>
+        </div>
+
+        <div class="card grid">
+          <h3>Adjust Score</h3>
+          <select id="scorePlayer"></select>
+          <input id="scoreValue" type="number" placeholder="New score" />
+          <button id="applyScore" class="secondary">Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline define:vars={{ gameId, hostToken, seed }}>
+    // @ts-nocheck
+    const rounds       = seed.rounds;
+    const players      = new Map(seed.initialPlayers);
+    const teams        = new Map(seed.initialTeams);
+    let teamMode       = seed.teamMode;
+    let currentRound   = seed.currentRound;
+    let usedSet        = new Set(seed.usedQuestionIds);
+    let openQuestion   = null;
+    let finalResults   = [];
+
+    // Populate team playerIds from players
+    for (const [, p] of players) {
+      if (p.teamId != null && teams.has(p.teamId)) {
+        teams.get(p.teamId).playerIds.push(p.id);
+      }
+    }
+
+    /* ── WebSocket ──────────────────────────────────────────────────────── */
+    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}&token=${encodeURIComponent(hostToken)}`;
+    const ws = new WebSocket(wsUrl);
+    ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'PING' })));
+
+    ws.addEventListener('message', (event) => {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === 'PLAYER_JOINED') {
+        players.set(msg.playerId, { id: msg.playerId, displayName: msg.displayName, score: 0, teamId: msg.teamId ?? null });
+        if (msg.teamId != null && teams.has(msg.teamId)) teams.get(msg.teamId).playerIds.push(msg.playerId);
+        renderPlayers();
+      }
+      if (msg.type === 'PLAYER_KICKED') { players.delete(msg.playerId); renderPlayers(); }
+
+      if (msg.type === 'SCORE_UPDATE' || msg.type === 'BOARD_STATE') {
+        (msg.scores || []).forEach((s) => { const p = players.get(s.playerId); if (p) p.score = s.score; });
+        (msg.usedQuestions || []).forEach((id) => usedSet.add(id));
+        if (msg.currentRound != null) currentRound = msg.currentRound;
+        renderPlayers();
+        renderBoard();
+        updateRoundLabel();
+      }
+
+      if (msg.type === 'ROUND_ADVANCE') {
+        currentRound = msg.roundIndex;
+        usedSet = new Set(); // new round, fresh board
+        renderBoard();
+        updateRoundLabel();
+      }
+
+      if (msg.type === 'QUESTION_OPEN') {
+        document.getElementById('questionText').textContent = msg.questionText;
+        const at = document.getElementById('answerText');
+        at.classList.add('answer-hidden');
+        at.textContent = ''; // will be filled from openQuestion
+        openQuestion = msg;
+        // Find the answer from local data
+        for (const r of rounds) {
+          for (const c of r.categories) {
+            const q = c.questions.find((q) => q.id === msg.questionId);
+            if (q) { at.textContent = '✓ ' + q.answer; break; }
+          }
+        }
+        renderJudgeButtons();
+      }
+
+      if (msg.type === 'QUESTION_CLOSED') {
+        openQuestion = null;
+        document.getElementById('questionText').textContent = 'No question open.';
+        document.getElementById('answerText').classList.add('answer-hidden');
+        document.getElementById('judgeButtons').innerHTML = '';
+      }
+
+      if (msg.type === 'FINAL_JEOPARDY_REVEAL' && Array.isArray(msg.results)) {
+        finalResults = msg.results;
+        document.getElementById('finalPanel').style.display = '';
+        renderFinalList();
+      }
+    });
+
+    /* ── Render board ───────────────────────────────────────────────────── */
+    function renderBoard() {
+      const boardEl = document.getElementById('board');
+      boardEl.innerHTML = '';
+      const cats = rounds[currentRound]?.categories ?? [];
+      if (!cats.length) { boardEl.textContent = 'No categories in this round.'; return; }
+      boardEl.style.gridTemplateColumns = `repeat(${cats.length}, 1fr)`;
+      for (const cat of cats) {
+        const h = document.createElement('div');
+        h.className = 'cat-header';
+        h.textContent = cat.title;
+        boardEl.appendChild(h);
+      }
+      const maxQ = Math.max(...cats.map((c) => c.questions.length), 0);
+      for (let qi = 0; qi < maxQ; qi++) {
+        for (const cat of cats) {
+          const q = (cat.questions || []).sort((a, b) => a.value - b.value)[qi];
+          if (!q) { boardEl.appendChild(document.createElement('div')); continue; }
+          const btn = document.createElement('button');
+          btn.className = 'question-cell' + (usedSet.has(q.id) ? ' used secondary' : '');
+          btn.textContent = '$' + q.value + (q.isDailyDouble || q.is_daily_double ? ' ★' : '');
+          btn.disabled = usedSet.has(q.id);
+          btn.addEventListener('click', () => {
+            ws.send(JSON.stringify({ type: 'OPEN_QUESTION', questionId: q.id }));
+          });
+          boardEl.appendChild(btn);
+        }
+      }
+    }
+
+    /* ── Render players / teams ─────────────────────────────────────────── */
+    function renderPlayers() {
+      const list = document.getElementById('playerList');
+      const sel  = document.getElementById('scorePlayer');
+      document.getElementById('playerCount').textContent = `(${players.size})`;
+      list.innerHTML = '';
+      sel.innerHTML = '';
+      const sorted = [...players.values()].sort((a, b) => b.score - a.score);
+      for (const p of sorted) {
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${p.displayName}</span><strong>$${p.score}</strong>`;
+        const kick = document.createElement('button');
+        kick.textContent = 'Kick';
+        kick.className = 'secondary';
+        kick.style.fontSize = '.8rem';
+        kick.style.padding = '.2rem .6rem';
+        kick.addEventListener('click', () => ws.send(JSON.stringify({ type: 'KICK_PLAYER', playerId: p.id })));
+        li.appendChild(kick);
+        list.appendChild(li);
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.displayName;
+        sel.appendChild(opt);
+      }
+
+      if (teamMode && teams.size > 0) {
+        document.getElementById('teamPanel').style.display = '';
+        renderTeams();
+      }
+    }
+
+    function renderTeams() {
+      const el = document.getElementById('teamList');
+      el.innerHTML = '';
+      for (const [, t] of teams) {
+        const members = t.playerIds.map((id) => players.get(id)?.displayName ?? '?').join(', ');
+        const teamScore = t.playerIds.reduce((sum, id) => sum + (players.get(id)?.score ?? 0), 0);
+        const div = document.createElement('div');
+        div.className = 'card';
+        div.style.padding = '.6rem';
+        div.innerHTML = `<strong>${t.name}</strong> <span style="color:var(--accent);font-family:Fredoka,sans-serif;">$${teamScore}</span><div class="small">${members || 'No players'}</div>`;
+        el.appendChild(div);
+      }
+    }
+
+    /* ── Judge buttons ──────────────────────────────────────────────────── */
+    function renderJudgeButtons() {
+      const el = document.getElementById('judgeButtons');
+      el.innerHTML = '';
+      for (const [id, p] of players) {
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.gap = '.4rem';
+        row.style.alignItems = 'center';
+        row.innerHTML = `<span style="min-width:100px;font-size:.95rem;">${p.displayName}</span>`;
+        const ok = document.createElement('button');
+        ok.textContent = '✓ Correct';
+        ok.style.fontSize = '.85rem';
+        ok.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: id, correct: true })));
+        const bad = document.createElement('button');
+        bad.textContent = '✗ Wrong';
+        bad.className = 'secondary';
+        bad.style.fontSize = '.85rem';
+        bad.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE', playerId: id, correct: false })));
+        row.append(ok, bad);
+        el.appendChild(row);
+      }
+    }
+
+    /* ── Final Jeopardy list ────────────────────────────────────────────── */
+    function renderFinalList() {
+      const el = document.getElementById('finalList');
+      el.innerHTML = '';
+      for (const r of finalResults) {
+        const item = document.createElement('div');
+        item.className = 'card';
+        item.style.padding = '.75rem';
+        item.innerHTML = `<strong>${r.displayName}</strong><div class="small">Wager: $${r.wager}</div><div style="margin:.3rem 0;">${r.answer || '<em style="opacity:.5">No answer</em>'}</div>`;
+        const ok = document.createElement('button');
+        ok.textContent = '✓ Correct';
+        ok.style.fontSize = '.85rem';
+        ok.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE_FINAL', playerId: r.playerId, correct: true })));
+        const bad = document.createElement('button');
+        bad.textContent = '✗ Wrong';
+        bad.className = 'secondary';
+        bad.style.fontSize = '.85rem';
+        bad.addEventListener('click', () => ws.send(JSON.stringify({ type: 'JUDGE_FINAL', playerId: r.playerId, correct: false })));
+        item.append(ok, bad);
+        el.appendChild(item);
+      }
+    }
+
+    function updateRoundLabel() {
+      const rl = document.getElementById('roundLabel');
+      if (rounds.length > 1) rl.textContent = `Round ${currentRound + 1} of ${rounds.length}`;
+    }
+
+    /* ── Control buttons ────────────────────────────────────────────────── */
+    document.getElementById('startGame').addEventListener('click', () => ws.send(JSON.stringify({ type: 'GAME_START' })));
+    document.getElementById('startFinal').addEventListener('click', () => ws.send(JSON.stringify({ type: 'START_FINAL_JEOPARDY' })));
+    document.getElementById('nextRound').addEventListener('click', () => ws.send(JSON.stringify({ type: 'ADVANCE_ROUND' })));
+    document.getElementById('endGame').addEventListener('click', () => { if (confirm('End the game?')) ws.send(JSON.stringify({ type: 'END_GAME' })); });
+    document.getElementById('toggleAnswer').addEventListener('click', () => {
+      const el = document.getElementById('answerText');
+      el.classList.toggle('answer-hidden');
+    });
+    document.getElementById('applyScore').addEventListener('click', () => {
+      const playerId = document.getElementById('scorePlayer').value;
+      const score = Number(document.getElementById('scoreValue').value);
+      if (!playerId || isNaN(score)) return;
+      ws.send(JSON.stringify({ type: 'ADJUST_SCORE', playerId, score }));
+    });
+
+    renderPlayers();
+    renderBoard();
+    updateRoundLabel();
+    if (rounds.length <= 1) document.getElementById('nextRound').style.display = 'none';
+  </script>
+</body>
+</html>

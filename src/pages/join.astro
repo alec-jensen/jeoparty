@@ -1,0 +1,139 @@
+---
+import '@/styles/global.css';
+// Pre-fill game code from URL param: /join?code=ABCD
+const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Join Game — Jeoparty</title>
+</head>
+<body>
+  <main style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:1.5rem;">
+    <div class="logo" style="font-family:'Fredoka',sans-serif; font-size:2.5rem; font-weight:700; background:linear-gradient(135deg,#f5c518,#ff4fa3); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:1.5rem; text-align:center;">JEOPARTY</div>
+
+    <section id="joinCard" class="card grid" style="width:100%; max-width:400px;">
+      <h2 style="text-align:center;">Join a Game</h2>
+
+      <div class="grid">
+        <label>
+          <span class="small">Game Code</span>
+          <input id="gameCode" maxlength="4" placeholder="ABCD" value={code}
+            style="text-transform:uppercase; font-family:'Fredoka',sans-serif; font-size:2rem; text-align:center; letter-spacing:0.3em; font-weight:700;" />
+        </label>
+        <label>
+          <span class="small">Your Name</span>
+          <input id="displayName" maxlength="64" placeholder="Nickname" autocomplete="nickname" />
+        </label>
+        <button id="joinBtn" class="accent" style="font-size:1.1rem;">Join Game</button>
+      </div>
+
+      <p id="joinMsg" class="small" style="text-align:center; min-height:1.2em;"></p>
+
+      <div style="border-top:1px solid var(--border); padding-top:0.85rem; text-align:center;">
+        <button id="switchHostBtn" class="secondary" style="font-size:0.88rem; padding:.4rem 1rem;">Join as Host</button>
+      </div>
+    </section>
+
+    <!-- Host join flow (hidden initially) -->
+    <section id="hostCard" class="card grid hidden" style="width:100%; max-width:400px;">
+      <h2 style="text-align:center;">Join as Host</h2>
+      <p class="small" style="text-align:center;">Enter the game code, then verify it's your game.</p>
+      <label>
+        <span class="small">Game Code</span>
+        <input id="hostGameCode" maxlength="4" placeholder="ABCD" value={code}
+          style="text-transform:uppercase; font-family:'Fredoka',sans-serif; font-size:2rem; text-align:center; letter-spacing:0.3em; font-weight:700;" />
+      </label>
+      <button id="hostJoinBtn" class="accent">Open Host Controls</button>
+      <p id="hostMsg" class="small" style="text-align:center; min-height:1.2em;"></p>
+      <div style="border-top:1px solid var(--border); padding-top:0.85rem; text-align:center;">
+        <button id="switchPlayerBtn" class="secondary" style="font-size:0.88rem; padding:.4rem 1rem;">Back to Player Join</button>
+      </div>
+    </section>
+
+    <p style="margin-top:1.5rem; font-size:0.85rem; color:var(--muted);">
+      <a href="/">← Back to home</a>
+    </p>
+  </main>
+
+  <script is:inline>
+    // @ts-nocheck
+    const joinCard = document.getElementById('joinCard');
+    const hostCard = document.getElementById('hostCard');
+    const joinMsg  = document.getElementById('joinMsg');
+    const hostMsg  = document.getElementById('hostMsg');
+
+    // Force uppercase on code inputs
+    ['gameCode', 'hostGameCode'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        const pos = el.selectionStart;
+        el.value = el.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+        el.setSelectionRange(pos, pos);
+      });
+    });
+
+    document.getElementById('switchHostBtn').addEventListener('click', () => {
+      joinCard.classList.add('hidden');
+      hostCard.classList.remove('hidden');
+      const code = document.getElementById('gameCode').value;
+      document.getElementById('hostGameCode').value = code;
+    });
+
+    document.getElementById('switchPlayerBtn').addEventListener('click', () => {
+      hostCard.classList.add('hidden');
+      joinCard.classList.remove('hidden');
+    });
+
+    // Player join
+    document.getElementById('joinBtn').addEventListener('click', async () => {
+      joinMsg.textContent = '';
+      const code = document.getElementById('gameCode').value.trim().toUpperCase();
+      const name = document.getElementById('displayName').value.trim();
+      if (code.length !== 4) { joinMsg.textContent = 'Enter a 4-letter game code.'; joinMsg.style.color = 'var(--bad)'; return; }
+      if (!name) { joinMsg.textContent = 'Enter your nickname.'; joinMsg.style.color = 'var(--bad)'; return; }
+
+      const res = await fetch(`/api/games/${code}/join`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayName: name }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        joinMsg.textContent = json.error || 'Could not join game.';
+        joinMsg.style.color = 'var(--bad)';
+        return;
+      }
+      location.href = `/game/${code}/play`;
+    });
+
+    // Host join — check if already logged in, otherwise redirect to login
+    document.getElementById('hostJoinBtn').addEventListener('click', async () => {
+      hostMsg.textContent = '';
+      const code = document.getElementById('hostGameCode').value.trim().toUpperCase();
+      if (code.length !== 4) { hostMsg.textContent = 'Enter a 4-letter game code.'; hostMsg.style.color = 'var(--bad)'; return; }
+
+      // Check ownership via API
+      const res = await fetch(`/api/games/${code}/host-check`);
+      if (res.status === 401) {
+        // Not logged in — redirect to login, come back here after
+        location.href = `/?next=/game/${code}/host`;
+        return;
+      }
+      if (res.status === 403) {
+        hostMsg.textContent = 'This game belongs to a different account.';
+        hostMsg.style.color = 'var(--bad)';
+        return;
+      }
+      if (!res.ok) {
+        hostMsg.textContent = 'Game not found.';
+        hostMsg.style.color = 'var(--bad)';
+        return;
+      }
+      location.href = `/game/${code}/host`;
+    });
+  </script>
+</body>
+</html>

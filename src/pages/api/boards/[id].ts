@@ -1,39 +1,48 @@
 import type { APIRoute } from 'astro';
-import { pool, query } from '@/lib/db';
+import { db, schema } from '@/lib/db';
+import { eq, inArray, and } from 'drizzle-orm';
 
-async function loadBoard(id: number) {
-  const boardRows = await query<any[]>('SELECT id, host_id, title FROM boards WHERE id = ?', [id]);
+async function loadFullBoard(boardId: number) {
+  const boardRows = await db.select({ id: schema.boards.id, hostId: schema.boards.hostId, title: schema.boards.title })
+    .from(schema.boards).where(eq(schema.boards.id, boardId));
   if (!boardRows.length) return null;
-  const categoryRows = await query<any[]>('SELECT id, title, position FROM categories WHERE board_id = ? ORDER BY position', [id]);
-  const questions = await query<any[]>(
-    'SELECT id, category_id, value, question, answer, is_daily_double, position FROM questions WHERE category_id IN (?) ORDER BY position',
-    [categoryRows.length ? categoryRows.map((c) => c.id) : [0]]
-  );
-  const questionMap = new Map<number, any[]>();
-  for (const q of questions) {
-    const list = questionMap.get(q.category_id) ?? [];
-    list.push({
-      id: q.id,
-      value: q.value,
-      question: q.question,
-      answer: q.answer,
-      isDailyDouble: !!q.is_daily_double,
-      position: q.position
-    });
-    questionMap.set(q.category_id, list);
+
+  const roundRows = await db.select().from(schema.rounds).where(eq(schema.rounds.boardId, boardId)).orderBy(schema.rounds.position);
+  const roundIds = roundRows.map(r => r.id);
+
+  const categoryRows = roundIds.length
+    ? await db.select().from(schema.categories).where(inArray(schema.categories.roundId, roundIds)).orderBy(schema.categories.position)
+    : [];
+  const categoryIds = categoryRows.map(c => c.id);
+
+  const questionRows = categoryIds.length
+    ? await db.select().from(schema.questions).where(inArray(schema.questions.categoryId, categoryIds)).orderBy(schema.questions.position)
+    : [];
+
+  const qByCategory = new Map<number, any[]>();
+  for (const q of questionRows) {
+    const list = qByCategory.get(q.categoryId) ?? [];
+    list.push({ id: q.id, value: q.value, question: q.question, answer: q.answer, isDailyDouble: !!q.isDailyDouble, position: q.position });
+    qByCategory.set(q.categoryId, list);
+  }
+  const cByRound = new Map<number, any[]>();
+  for (const c of categoryRows) {
+    const list = cByRound.get(c.roundId) ?? [];
+    list.push({ id: c.id, title: c.title, position: c.position, questions: qByCategory.get(c.id) ?? [] });
+    cByRound.set(c.roundId, list);
   }
 
   return {
     id: boardRows[0].id,
-    hostId: boardRows[0].host_id,
+    hostId: boardRows[0].hostId,
     title: boardRows[0].title,
-    categories: categoryRows.map((c) => ({ id: c.id, title: c.title, position: c.position, questions: questionMap.get(c.id) || [] }))
+    rounds: roundRows.map(r => ({ id: r.id, title: r.title, position: r.position, categories: cByRound.get(r.id) ?? [] })),
   };
 }
 
 export const GET: APIRoute = async ({ params, locals }) => {
   if (!locals.host) return new Response('Unauthorized', { status: 401 });
-  const board = await loadBoard(Number(params.id));
+  const board = await loadFullBoard(Number(params.id));
   if (!board || board.hostId !== locals.host.hostId) return new Response('Not found', { status: 404 });
   return new Response(JSON.stringify(board), { status: 200 });
 };
@@ -42,103 +51,77 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
   if (!locals.host) return new Response('Unauthorized', { status: 401 });
   const boardId = Number(params.id);
   const payload = await request.json();
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
 
-    const [boardRows] = await conn.query<any[]>('SELECT id, host_id FROM boards WHERE id = ? FOR UPDATE', [boardId]);
-    if (!boardRows.length || boardRows[0].host_id !== locals.host.hostId) {
-      await conn.rollback();
-      return new Response('Not found', { status: 404 });
-    }
+  const boardCheck = await db.select({ hostId: schema.boards.hostId })
+    .from(schema.boards).where(eq(schema.boards.id, boardId));
+  if (!boardCheck.length || boardCheck[0].hostId !== locals.host.hostId) return new Response('Not found', { status: 404 });
 
-    await conn.query('UPDATE boards SET title = ? WHERE id = ?', [String(payload.title || 'Untitled Board'), boardId]);
+  await db.update(schema.boards).set({ title: String(payload.title || 'Untitled Board') }).where(eq(schema.boards.id, boardId));
 
-    const categories = Array.isArray(payload.categories) ? payload.categories : [];
-    const keepCategoryIds = categories.filter((c: any) => c.id).map((c: any) => Number(c.id));
-    if (keepCategoryIds.length) {
-      await conn.query(`DELETE FROM categories WHERE board_id = ? AND id NOT IN (${keepCategoryIds.map(() => '?').join(',')})`, [
-        boardId,
-        ...keepCategoryIds
-      ]);
+  const incomingRounds: any[] = Array.isArray(payload.rounds) ? payload.rounds : [];
+  const keepRoundIds = incomingRounds.filter(r => r.id).map(r => Number(r.id));
+  // Delete removed rounds (cascade deletes categories + questions)
+  const existingRounds = await db.select({ id: schema.rounds.id }).from(schema.rounds).where(eq(schema.rounds.boardId, boardId));
+  const toDeleteRoundIds = existingRounds.map(r => r.id).filter(id => !keepRoundIds.includes(id));
+  if (toDeleteRoundIds.length) await db.delete(schema.rounds).where(inArray(schema.rounds.id, toDeleteRoundIds));
+
+  for (let ri = 0; ri < incomingRounds.length; ri++) {
+    const round = incomingRounds[ri];
+    let roundId = round.id ? Number(round.id) : 0;
+
+    if (roundId) {
+      await db.update(schema.rounds).set({ title: String(round.title || 'Round'), position: ri }).where(and(eq(schema.rounds.id, roundId), eq(schema.rounds.boardId, boardId)));
     } else {
-      await conn.query('DELETE FROM categories WHERE board_id = ?', [boardId]);
+      const [{ id }] = await db.insert(schema.rounds).values({ boardId, title: String(round.title || 'Round'), position: ri }).$returningId();
+      roundId = id;
     }
 
-    for (let ci = 0; ci < categories.length; ci++) {
-      const cat = categories[ci];
-      let categoryId = Number(cat.id || 0);
-      if (categoryId) {
-        await conn.query('UPDATE categories SET title = ?, position = ? WHERE id = ? AND board_id = ?', [
-          String(cat.title || 'Category'),
-          Number(cat.position ?? ci),
-          categoryId,
-          boardId
-        ]);
+    const incomingCats: any[] = Array.isArray(round.categories) ? round.categories : [];
+    const keepCatIds = incomingCats.filter(c => c.id).map(c => Number(c.id));
+    const existingCats = await db.select({ id: schema.categories.id }).from(schema.categories).where(eq(schema.categories.roundId, roundId));
+    const toDeleteCatIds = existingCats.map(c => c.id).filter(id => !keepCatIds.includes(id));
+    if (toDeleteCatIds.length) await db.delete(schema.categories).where(inArray(schema.categories.id, toDeleteCatIds));
+
+    for (let ci = 0; ci < incomingCats.length; ci++) {
+      const cat = incomingCats[ci];
+      let catId = cat.id ? Number(cat.id) : 0;
+
+      if (catId) {
+        await db.update(schema.categories).set({ title: String(cat.title || 'Category'), position: ci }).where(eq(schema.categories.id, catId));
       } else {
-        const [res] = await conn.query<any>('INSERT INTO categories (board_id, title, position) VALUES (?, ?, ?)', [
-          boardId,
-          String(cat.title || 'Category'),
-          Number(cat.position ?? ci)
-        ]);
-        categoryId = res.insertId;
+        const [{ id }] = await db.insert(schema.categories).values({ roundId, title: String(cat.title || 'Category'), position: ci }).$returningId();
+        catId = id;
       }
 
-      const questions = Array.isArray(cat.questions) ? cat.questions : [];
-      const keepQuestionIds = questions.filter((q: any) => q.id).map((q: any) => Number(q.id));
-      if (keepQuestionIds.length) {
-        await conn.query(`DELETE FROM questions WHERE category_id = ? AND id NOT IN (${keepQuestionIds.map(() => '?').join(',')})`, [
-          categoryId,
-          ...keepQuestionIds
-        ]);
-      } else {
-        await conn.query('DELETE FROM questions WHERE category_id = ?', [categoryId]);
-      }
+      const incomingQs: any[] = Array.isArray(cat.questions) ? cat.questions : [];
+      const keepQIds = incomingQs.filter(q => q.id).map(q => Number(q.id));
+      const existingQs = await db.select({ id: schema.questions.id }).from(schema.questions).where(eq(schema.questions.categoryId, catId));
+      const toDeleteQIds = existingQs.map(q => q.id).filter(id => !keepQIds.includes(id));
+      if (toDeleteQIds.length) await db.delete(schema.questions).where(inArray(schema.questions.id, toDeleteQIds));
 
-      for (let qi = 0; qi < questions.length; qi++) {
-        const q = questions[qi];
+      for (let qi = 0; qi < incomingQs.length; qi++) {
+        const q = incomingQs[qi];
+        const vals = {
+          value: Number(q.value || 0),
+          question: String(q.question || ''),
+          answer: String(q.answer || ''),
+          isDailyDouble: !!q.isDailyDouble,
+          position: qi,
+        };
         if (q.id) {
-          await conn.query(
-            'UPDATE questions SET value = ?, question = ?, answer = ?, is_daily_double = ?, position = ? WHERE id = ? AND category_id = ?',
-            [
-              Number(q.value || 0),
-              String(q.question || ''),
-              String(q.answer || ''),
-              !!q.isDailyDouble,
-              Number(q.position ?? qi),
-              Number(q.id),
-              categoryId
-            ]
-          );
+          await db.update(schema.questions).set(vals).where(eq(schema.questions.id, Number(q.id)));
         } else {
-          await conn.query(
-            'INSERT INTO questions (category_id, value, question, answer, is_daily_double, position) VALUES (?, ?, ?, ?, ?, ?)',
-            [
-              categoryId,
-              Number(q.value || 0),
-              String(q.question || ''),
-              String(q.answer || ''),
-              !!q.isDailyDouble,
-              Number(q.position ?? qi)
-            ]
-          );
+          await db.insert(schema.questions).values({ categoryId: catId, ...vals });
         }
       }
     }
-
-    await conn.commit();
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
-  } catch (error) {
-    await conn.rollback();
-    return new Response(JSON.stringify({ error: 'Failed to save board' }), { status: 500 });
-  } finally {
-    conn.release();
   }
+
+  return new Response(JSON.stringify({ ok: true }), { status: 200 });
 };
 
 export const DELETE: APIRoute = async ({ params, locals }) => {
   if (!locals.host) return new Response('Unauthorized', { status: 401 });
-  const boardId = Number(params.id);
-  await query('DELETE FROM boards WHERE id = ? AND host_id = ?', [boardId, locals.host.hostId]);
+  await db.delete(schema.boards).where(and(eq(schema.boards.id, Number(params.id)), eq(schema.boards.hostId, locals.host.hostId)));
   return new Response(JSON.stringify({ ok: true }), { status: 200 });
 };

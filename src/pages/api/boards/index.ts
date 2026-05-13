@@ -1,53 +1,43 @@
 import type { APIRoute } from 'astro';
-import { query } from '@/lib/db';
+import { db, schema } from '@/lib/db';
+import { eq, desc } from 'drizzle-orm';
 
 export const GET: APIRoute = async ({ locals }) => {
-  const host = locals.host;
-  if (!host) return new Response('Unauthorized', { status: 401 });
-  const rows = await query<any[]>('SELECT id, title, created_at, updated_at FROM boards WHERE host_id = ? ORDER BY updated_at DESC', [
-    host.hostId
-  ]);
+  if (!locals.host) return new Response('Unauthorized', { status: 401 });
+  const rows = await db.select({ id: schema.boards.id, title: schema.boards.title, createdAt: schema.boards.createdAt, updatedAt: schema.boards.updatedAt })
+    .from(schema.boards)
+    .where(eq(schema.boards.hostId, locals.host.hostId))
+    .orderBy(desc(schema.boards.updatedAt));
   return new Response(JSON.stringify(rows), { status: 200 });
 };
 
 export const POST: APIRoute = async ({ request, locals }) => {
-  const host = locals.host;
-  if (!host) return new Response('Unauthorized', { status: 401 });
+  if (!locals.host) return new Response('Unauthorized', { status: 401 });
   const body = await request.json();
   const title = String(body.title || 'New Board').trim();
-  const result = await query<any>('INSERT INTO boards (host_id, title) VALUES (?, ?)', [host.hostId, title]);
-  const boardId = result.insertId as number;
 
-  const categories = Array.isArray(body.categories)
-    ? body.categories
-    : Array.from({ length: 6 }, (_, i) => ({
-        title: `Category ${i + 1}`,
-        position: i,
-        questions: Array.from({ length: 5 }, (_, qi) => ({
-          value: (qi + 1) * 200,
-          question: 'Question text',
-          answer: 'Answer text',
-          isDailyDouble: false,
-          position: qi
-        }))
-      }));
+  const [{ id: boardId }] = await db.insert(schema.boards)
+    .values({ hostId: locals.host.hostId, title })
+    .$returningId();
 
-  for (const category of categories) {
-    const catRes = await query<any>('INSERT INTO categories (board_id, title, position) VALUES (?, ?, ?)', [
-      boardId,
-      String(category.title || 'Category'),
-      Number(category.position || 0)
-    ]);
-    const categoryId = catRes.insertId as number;
-    for (const q of category.questions || []) {
-      await query('INSERT INTO questions (category_id, value, question, answer, is_daily_double, position) VALUES (?, ?, ?, ?, ?, ?)', [
+  // Create default "Round 1" with 6 categories × 5 questions
+  const [{ id: roundId }] = await db.insert(schema.rounds)
+    .values({ boardId, title: 'Round 1', position: 0 })
+    .$returningId();
+
+  for (let ci = 0; ci < 6; ci++) {
+    const [{ id: categoryId }] = await db.insert(schema.categories)
+      .values({ roundId, title: `Category ${ci + 1}`, position: ci })
+      .$returningId();
+    for (let qi = 0; qi < 5; qi++) {
+      await db.insert(schema.questions).values({
         categoryId,
-        Number(q.value || 200),
-        String(q.question || ''),
-        String(q.answer || ''),
-        !!q.isDailyDouble,
-        Number(q.position || 0)
-      ]);
+        value: (qi + 1) * 200,
+        question: 'Question text',
+        answer: 'Answer text',
+        isDailyDouble: false,
+        position: qi,
+      });
     }
   }
 

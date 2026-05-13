@@ -1,22 +1,25 @@
 import type { IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { query } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db, schema } from '@/lib/db';
 import {
   boardState,
   getOrCreateGame,
   markQuestionUsed,
   persistPlayerScore,
   scoreList,
+  teamList,
   setGameStatus,
-  type ActiveGame
+  currentRoundCategories,
+  type ActiveGame,
 } from '@/lib/gameState';
 import { verifyHostToken, verifyPlayerToken } from '@/lib/auth';
 
 type SocketMeta = {
   socketId: string;
   gameId: string;
-  role: 'host' | 'player';
+  role: 'host' | 'player' | 'presenter';
   hostId?: number;
   playerId?: string;
 };
@@ -52,7 +55,7 @@ function sendToHost(game: ActiveGame, type: string, payload: Record<string, unkn
 }
 
 function findQuestion(game: ActiveGame, questionId: number) {
-  for (const cat of game.board.categories) {
+  for (const cat of currentRoundCategories(game)) {
     const q = cat.questions.find((it) => it.id === questionId);
     if (q) return { category: cat, question: q };
   }
@@ -107,20 +110,16 @@ async function judgeAnswer(game: ActiveGame, playerId: string, correct: boolean)
   const player = game.players.get(playerId);
   if (!player) return;
   const delta = correct
-    ? current.isDailyDouble
-      ? current.dailyDoubleWager ?? current.value
-      : current.value
-    : current.isDailyDouble
-    ? -(current.dailyDoubleWager ?? current.value)
-    : -current.value;
+    ? current.isDailyDouble ? (current.dailyDoubleWager ?? current.value) : current.value
+    : current.isDailyDouble ? -(current.dailyDoubleWager ?? current.value) : -current.value;
   player.score += delta;
   await persistPlayerScore(game.gameId, playerId, player.score);
   broadcast(game, 'QUESTION_RESULT', { playerId, correct, newScore: player.score });
-  broadcast(game, 'SCORE_UPDATE', { scores: scoreList(game) });
+  broadcast(game, 'SCORE_UPDATE', { scores: scoreList(game), teams: teamList(game) });
 
   if (correct) {
     game.currentPicker = playerId;
-    await query('UPDATE games SET current_picker_id = ? WHERE id = ?', [playerId, game.gameId]);
+    await db.update(schema.games).set({ currentPickerId: playerId }).where(eq(schema.games.id, game.gameId));
     await closeQuestion(game);
     return;
   }
@@ -139,13 +138,15 @@ async function judgeAnswer(game: ActiveGame, playerId: string, correct: boolean)
   }
 }
 
-function pickFinalQuestion(game: ActiveGame) {
-  for (const cat of game.board.categories) {
-    for (const q of cat.questions) {
-      if (!game.usedQuestions.has(q.id)) return q.question;
+function pickFinalQuestion(game: ActiveGame): string {
+  for (const round of game.board.rounds) {
+    for (const cat of round.categories) {
+      for (const q of cat.questions) {
+        if (!game.usedQuestions.has(q.id)) return q.question;
+      }
     }
   }
-  return 'Final Jeopardy: The game is about to end!';
+  return 'What is: the most important question you\'ve never been asked?';
 }
 
 async function maybeStartFinalPrompt(game: ActiveGame) {
@@ -161,7 +162,7 @@ async function maybeStartFinalPrompt(game: ActiveGame) {
       displayName: pl.displayName,
       wager: game.finalJeopardy?.wagers.get(id) ?? 0,
       answer: game.finalJeopardy?.answers.get(id) ?? '',
-      newScore: pl.score
+      newScore: pl.score,
     }));
     sendToHost(game, 'FINAL_JEOPARDY_REVEAL', { results });
   }, 30000);
@@ -183,42 +184,46 @@ export function initWebSockets(server: import('node:http').Server) {
     const requestUrl = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const gameId = requestUrl.searchParams.get('gameId');
     const token = requestUrl.searchParams.get('token');
-    if (!gameId || !token) return ws.close();
+    if (!gameId) return ws.close();
 
     const game = await getOrCreateGame(gameId);
     if (!game) return ws.close();
 
     let meta: SocketMeta | null = null;
-    const hostPayload = await verifyHostToken(token);
-    if (hostPayload) {
-      const rows = await query<any[]>('SELECT host_id FROM games WHERE id = ?', [gameId]);
-      if (!rows.length || rows[0].host_id !== hostPayload.hostId) return ws.close();
-      meta = { socketId: randomUUID(), gameId, role: 'host', hostId: hostPayload.hostId };
-      game.hostSocketId = meta.socketId;
+
+    if (token) {
+      const hostPayload = await verifyHostToken(token);
+      if (hostPayload) {
+        const rows = await db.select({ hostId: schema.games.hostId })
+          .from(schema.games).where(eq(schema.games.id, gameId));
+        if (!rows.length || rows[0].hostId !== hostPayload.hostId) return ws.close();
+        meta = { socketId: randomUUID(), gameId, role: 'host', hostId: hostPayload.hostId };
+        game.hostSocketId = meta.socketId;
+      } else {
+        const playerPayload = verifyPlayerToken(token);
+        if (!playerPayload || playerPayload.gameId !== gameId) return ws.close();
+        const player = game.players.get(playerPayload.playerId);
+        if (!player) return ws.close();
+        meta = { socketId: randomUUID(), gameId, role: 'player', playerId: playerPayload.playerId };
+        player.socketId = meta.socketId;
+        await db.update(schema.players).set({ socketId: meta.socketId }).where(eq(schema.players.id, playerPayload.playerId));
+      }
     } else {
-      const playerPayload = verifyPlayerToken(token);
-      if (!playerPayload || playerPayload.gameId !== gameId) return ws.close();
-      const player = game.players.get(playerPayload.playerId);
-      if (!player) return ws.close();
-      meta = { socketId: randomUUID(), gameId, role: 'player', playerId: playerPayload.playerId };
-      player.socketId = meta.socketId;
-      await query('UPDATE players SET socket_id = ? WHERE id = ?', [meta.socketId, playerPayload.playerId]);
+      // No token = presenter (read-only big-screen view)
+      meta = { socketId: randomUUID(), gameId, role: 'presenter' };
     }
 
     sockets.set(meta.socketId, { ws, meta });
     send(ws, 'BOARD_STATE', boardState(game));
+
     if (meta.role === 'player' && meta.playerId) {
       const p = game.players.get(meta.playerId);
-      broadcast(game, 'PLAYER_JOINED', { playerId: meta.playerId, displayName: p?.displayName ?? 'Player' });
+      broadcast(game, 'PLAYER_JOINED', { playerId: meta.playerId, displayName: p?.displayName ?? 'Player', teamId: p?.teamId ?? null });
     }
 
     ws.on('message', async (raw) => {
       let data: any;
-      try {
-        data = JSON.parse(raw.toString());
-      } catch {
-        return;
-      }
+      try { data = JSON.parse(raw.toString()); } catch { return; }
       const current = await getOrCreateGame(gameId);
       if (!current) return;
 
@@ -227,6 +232,7 @@ export function initWebSockets(server: import('node:http').Server) {
         return;
       }
 
+      // ── HOST MESSAGES ───────────────────────────────────────────────────────
       if (meta.role === 'host') {
         if (data.type === 'GAME_START') {
           await setGameStatus(gameId, 'active');
@@ -247,14 +253,14 @@ export function initWebSockets(server: import('node:http').Server) {
             buzzerOpen: false,
             serverBuzzerOpenTime: null,
             buzzOrder: [],
-            eliminated: new Set()
+            eliminated: new Set(),
           };
           broadcast(current, 'QUESTION_OPEN', {
             questionId,
             categoryTitle: found.category.title,
             value: found.question.value,
             questionText: found.question.question,
-            isDailyDouble: found.question.isDailyDouble
+            isDailyDouble: found.question.isDailyDouble,
           });
           if (!found.question.isDailyDouble) openBuzzer(current);
         }
@@ -267,14 +273,14 @@ export function initWebSockets(server: import('node:http').Server) {
           current.currentQuestion.dailyDoubleWager = Number(data.wager);
           broadcast(current, 'BUZZ_WINNER', {
             playerId: data.playerId,
-            displayName: current.players.get(data.playerId)?.displayName ?? 'Player'
+            displayName: current.players.get(data.playerId)?.displayName ?? 'Player',
           });
         }
 
         if (data.type === 'KICK_PLAYER') {
           const playerId = data.playerId as string;
           current.players.delete(playerId);
-          await query('DELETE FROM players WHERE id = ? AND game_id = ?', [playerId, gameId]);
+          await db.delete(schema.players).where(eq(schema.players.id, playerId));
           broadcast(current, 'PLAYER_KICKED', { playerId });
         }
 
@@ -285,19 +291,51 @@ export function initWebSockets(server: import('node:http').Server) {
           if (!player || Number.isNaN(score)) return;
           player.score = score;
           await persistPlayerScore(gameId, playerId, score);
-          broadcast(current, 'SCORE_UPDATE', { scores: scoreList(current) });
+          broadcast(current, 'SCORE_UPDATE', { scores: scoreList(current), teams: teamList(current) });
+        }
+
+        if (data.type === 'MOVE_PLAYER') {
+          const playerId = data.playerId as string;
+          const teamId = data.teamId != null ? Number(data.teamId) : null;
+          const player = current.players.get(playerId);
+          if (!player) return;
+          // Remove from old team
+          if (player.teamId != null) {
+            const oldTeam = current.teams.get(player.teamId);
+            if (oldTeam) oldTeam.playerIds = oldTeam.playerIds.filter((id) => id !== playerId);
+          }
+          player.teamId = teamId;
+          // Add to new team
+          if (teamId != null) {
+            const newTeam = current.teams.get(teamId);
+            if (newTeam && !newTeam.playerIds.includes(playerId)) newTeam.playerIds.push(playerId);
+          }
+          await db.update(schema.players).set({ teamId }).where(eq(schema.players.id, playerId));
+          broadcast(current, 'BOARD_STATE', boardState(current));
+        }
+
+        if (data.type === 'ADVANCE_ROUND') {
+          const nextRound = current.currentRound + 1;
+          if (nextRound >= current.board.rounds.length) return;
+          current.currentRound = nextRound;
+          await db.update(schema.games).set({ currentRound: nextRound }).where(eq(schema.games.id, gameId));
+          broadcast(current, 'ROUND_ADVANCE', {
+            roundIndex: nextRound,
+            roundTitle: current.board.rounds[nextRound]?.title ?? `Round ${nextRound + 1}`,
+          });
+          broadcast(current, 'BOARD_STATE', boardState(current));
         }
 
         if (data.type === 'START_FINAL_JEOPARDY') {
           await setGameStatus(gameId, 'final_jeopardy');
           current.status = 'final_jeopardy';
-          broadcast(current, 'START_FINAL_JEOPARDY');
           current.finalJeopardy = {
             wagers: new Map(),
             answers: new Map(),
             judgments: new Map(),
-            finalQuestion: pickFinalQuestion(current)
+            finalQuestion: pickFinalQuestion(current),
           };
+          broadcast(current, 'START_FINAL_JEOPARDY');
           const timer = setTimeout(async () => {
             await maybeStartFinalPrompt(current);
           }, 60000);
@@ -322,10 +360,10 @@ export function initWebSockets(server: import('node:http').Server) {
               wager: current.finalJeopardy?.wagers.get(id) ?? 0,
               answer: current.finalJeopardy?.answers.get(id) ?? '',
               correct: current.finalJeopardy?.judgments.get(id) ?? false,
-              newScore: pl.score
+              newScore: pl.score,
             }));
             broadcast(current, 'FINAL_JEOPARDY_END', { results });
-            broadcast(current, 'GAME_OVER', { scores: scoreList(current) });
+            broadcast(current, 'GAME_OVER', { scores: scoreList(current), teams: teamList(current) });
             await setGameStatus(gameId, 'finished');
             current.status = 'finished';
           }
@@ -334,10 +372,11 @@ export function initWebSockets(server: import('node:http').Server) {
         if (data.type === 'END_GAME') {
           await setGameStatus(gameId, 'finished');
           current.status = 'finished';
-          broadcast(current, 'GAME_OVER', { scores: scoreList(current) });
+          broadcast(current, 'GAME_OVER', { scores: scoreList(current), teams: teamList(current) });
         }
       }
 
+      // ── PLAYER MESSAGES ─────────────────────────────────────────────────────
       if (meta.role === 'player' && meta.playerId) {
         if (data.type === 'SELECT_QUESTION') {
           if (current.currentPicker !== meta.playerId || current.status !== 'active' || current.currentQuestion) return;
@@ -352,14 +391,14 @@ export function initWebSockets(server: import('node:http').Server) {
             buzzerOpen: false,
             serverBuzzerOpenTime: null,
             buzzOrder: [],
-            eliminated: new Set()
+            eliminated: new Set(),
           };
           broadcast(current, 'QUESTION_OPEN', {
             questionId,
             categoryTitle: found.category.title,
             value: found.question.value,
             questionText: found.question.question,
-            isDailyDouble: found.question.isDailyDouble
+            isDailyDouble: found.question.isDailyDouble,
           });
           if (!found.question.isDailyDouble) openBuzzer(current);
         }
@@ -393,7 +432,7 @@ export function initWebSockets(server: import('node:http').Server) {
               displayName: pl.displayName,
               wager: current.finalJeopardy?.wagers.get(id) ?? 0,
               answer: current.finalJeopardy?.answers.get(id) ?? '',
-              newScore: pl.score
+              newScore: pl.score,
             }));
             sendToHost(current, 'FINAL_JEOPARDY_REVEAL', { results });
           }
@@ -402,6 +441,7 @@ export function initWebSockets(server: import('node:http').Server) {
     });
 
     ws.on('close', async () => {
+      if (!meta) return;
       sockets.delete(meta.socketId);
       const g = await getOrCreateGame(meta.gameId);
       if (!g) return;

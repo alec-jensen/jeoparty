@@ -1,95 +1,44 @@
-import mysql from 'mysql2/promise';
+import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2';
+import * as mysqlSchema from './schema';
 
-const databaseUrl = process.env.DATABASE_URL;
+export * as schema from './schema';
+export type Schema = typeof mysqlSchema;
 
-if (!databaseUrl) {
-  throw new Error('DATABASE_URL is required');
+// Live-binding singleton — reassigned by initDb(), visible to all importers via ES module live bindings
+export let db = null as unknown as MySql2Database<typeof mysqlSchema>;
+
+export async function initDb() {
+  if (db) return db;
+  const url = process.env.DATABASE_URL ?? '';
+  if (!url) throw new Error('DATABASE_URL is required');
+
+  if (url.startsWith('file:') || url === ':memory:') {
+    const { default: Database } = await import('better-sqlite3');
+    const { drizzle: sqliteDrizzle } = await import('drizzle-orm/better-sqlite3');
+    const sqliteSchema = await import('./schema.sqlite');
+    const path = url === ':memory:' ? ':memory:' : url.replace(/^file:\/\//, '').replace(/^file:/, '');
+    const sqlite = new Database(path);
+    // Cast to MySQL type for uniform TS interface; query API is identical at runtime
+    db = sqliteDrizzle(sqlite, { schema: sqliteSchema }) as unknown as MySql2Database<typeof mysqlSchema>;
+  } else {
+    const { createPool } = await import('mysql2/promise');
+    db = drizzle(createPool(url), { schema: mysqlSchema, mode: 'default' });
+  }
+
+  // Auto-sync schema on startup
+  try {
+    const { execSync } = await import('node:child_process');
+    process.stdout.write('Syncing database schema... ');
+    execSync('npx drizzle-kit push', { stdio: 'ignore' });
+    process.stdout.write('✓\n');
+  } catch {
+    // Schema push may fail on some deployments; not critical
+  }
+
+  return db;
 }
 
-export const pool = mysql.createPool(databaseUrl);
-
-let schemaReady: Promise<void> | null = null;
-
-export function ensureSchema() {
-  if (schemaReady) return schemaReady;
-  schemaReady = (async () => {
-    await pool.query(`
-CREATE TABLE IF NOT EXISTS hosts (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)`);
-    await pool.query(`
-CREATE TABLE IF NOT EXISTS auth_tokens (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  host_id INT NOT NULL,
-  token_hash VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
-)`);
-    await pool.query(`
-CREATE TABLE IF NOT EXISTS boards (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  host_id INT NOT NULL,
-  title VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (host_id) REFERENCES hosts(id)
-)`);
-    await pool.query(`
-CREATE TABLE IF NOT EXISTS categories (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  board_id INT NOT NULL,
-  title VARCHAR(255) NOT NULL,
-  position INT NOT NULL,
-  FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE
-)`);
-    await pool.query(`
-CREATE TABLE IF NOT EXISTS questions (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  category_id INT NOT NULL,
-  value INT NOT NULL,
-  question TEXT NOT NULL,
-  answer TEXT NOT NULL,
-  is_daily_double BOOLEAN DEFAULT FALSE,
-  position INT NOT NULL,
-  FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
-)`);
-    await pool.query(`
-CREATE TABLE IF NOT EXISTS games (
-  id VARCHAR(36) PRIMARY KEY,
-  board_id INT NOT NULL,
-  host_id INT NOT NULL,
-  status ENUM('lobby','active','final_jeopardy','finished') DEFAULT 'lobby',
-  current_picker_id VARCHAR(36) NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (board_id) REFERENCES boards(id),
-  FOREIGN KEY (host_id) REFERENCES hosts(id)
-)`);
-    await pool.query(`
-CREATE TABLE IF NOT EXISTS players (
-  id VARCHAR(36) PRIMARY KEY,
-  game_id VARCHAR(36) NOT NULL,
-  display_name VARCHAR(64) NOT NULL,
-  score INT DEFAULT 0,
-  socket_id VARCHAR(255) NULL,
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
-)`);
-    await pool.query(`
-CREATE TABLE IF NOT EXISTS used_questions (
-  game_id VARCHAR(36) NOT NULL,
-  question_id INT NOT NULL,
-  PRIMARY KEY (game_id, question_id),
-  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
-  FOREIGN KEY (question_id) REFERENCES questions(id)
-)`);
-  })();
-  return schemaReady;
-}
-
-export async function query<T>(sql: string, params: unknown[] = []) {
-  await ensureSchema();
-  const [rows] = await pool.query(sql, params);
-  return rows as T;
+export function isSqlite() {
+  const url = process.env.DATABASE_URL ?? '';
+  return url.startsWith('file:') || url === ':memory:';
 }

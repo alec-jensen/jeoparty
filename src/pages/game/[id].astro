@@ -1,90 +1,249 @@
 ---
+// Presenter view — shown on the big screen. No auth required.
 import '@/styles/global.css';
-import { HOST_COOKIE } from '@/lib/auth';
-import { query } from '@/lib/db';
+import QRCode from 'qrcode';
+import { db, schema } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 
-if (!Astro.locals.host) return Astro.redirect('/');
-const gameId = String(Astro.params.id);
-const rows = await query<any[]>('SELECT id, board_id, host_id, status FROM games WHERE id = ?', [gameId]);
-if (!rows.length || rows[0].host_id !== Astro.locals.host.hostId) return Astro.redirect('/dashboard');
-const game = rows[0];
-const hostToken = Astro.cookies.get(HOST_COOKIE)?.value ?? '';
-const boardRows = await query<any[]>('SELECT id, title FROM boards WHERE id = ?', [game.board_id]);
-const categories = await query<any[]>('SELECT id, title, position FROM categories WHERE board_id = ? ORDER BY position', [game.board_id]);
-const questions = await query<any[]>('SELECT id, category_id, value, is_daily_double, question, answer FROM questions WHERE category_id IN (?)', [
-  categories.length ? categories.map((c) => c.id) : [0]
-]);
-const usedRows = await query<any[]>('SELECT question_id FROM used_questions WHERE game_id = ?', [gameId]);
-const players = await query<any[]>('SELECT id, display_name, score FROM players WHERE game_id = ?', [gameId]);
-const byCategory = new Map<number, any[]>();
-for (const q of questions) {
-  const list = byCategory.get(q.category_id) ?? [];
-  list.push(q);
-  byCategory.set(q.category_id, list);
-}
-const board = {
-  title: boardRows[0]?.title ?? 'Board',
-  categories: categories.map((c) => ({ ...c, questions: byCategory.get(c.id) ?? [] }))
-};
+const gameId = String(Astro.params.id).toUpperCase();
+const gameRows = await db.select({ id: schema.games.id, status: schema.games.status })
+  .from(schema.games).where(eq(schema.games.id, gameId));
+if (!gameRows.length) return Astro.redirect('/');
+
+const joinUrl = `${Astro.url.origin}/join?code=${gameId}`;
+const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c518', light: '#0d0a1e' }, margin: 1 });
 ---
 <html lang="en">
-  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Host Game</title></head>
-  <body data-game-id={gameId} data-host-token={hostToken}>
-    <main class="page grid host-layout">
-      <section class="grid" style="align-content:start;">
-        <article class="card">
-          <h1>{board.title}</h1>
-          <p class="small">Game ID: {gameId}</p>
-          <canvas id="qr"></canvas>
-          <p><a id="playLink" href={`/game/${gameId}/play`} target="_blank">Player join link</a></p>
-          <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
-            <button id="startGame">Start Game</button>
-            <button id="startFinal" class="secondary">Start Final Jeopardy</button>
-            <button id="endGame" class="secondary">End Game</button>
-          </div>
-        </article>
+<head>
+  <meta charset="utf-8" />
+  <title>Jeoparty — {gameId}</title>
+  <style>
+    html, body { height: 100%; overflow: hidden; background: #0d0a1e; }
+    #scale-root { transform-origin: top left; }
+  </style>
+</head>
+<body>
+  <div id="scale-root" class="presenter-root">
 
-        <article class="card">
-          <h2>Board</h2>
-          <div id="board" class="grid board-grid"></div>
-        </article>
-      </section>
+    <!-- Lobby screen (before game starts) -->
+    <div id="lobbyScreen" style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2rem;">
+      <div style="font-family:'Fredoka',sans-serif; font-size:7rem; font-weight:700; background:linear-gradient(135deg,#f5c518,#ff4fa3); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; line-height:1;">JEOPARTY</div>
+      <div class="join-code">{gameId}</div>
+      <p style="font-family:'Fredoka',sans-serif; font-size:1.6rem; color:var(--muted);">Go to <strong style="color:var(--text);">{Astro.url.host}/join</strong> and enter the code above</p>
+      <div set:html={qrSvg} style="width:220px; height:220px;" />
+      <div id="playerList" style="display:flex; gap:1rem; flex-wrap:wrap; justify-content:center; max-width:1200px; margin-top:0.5rem;"></div>
+    </div>
 
-      <section class="grid" style="align-content:start;">
-        <article class="card">
-          <h2>Players</h2>
-          <ul id="players" class="scores"></ul>
-        </article>
+    <!-- Active game screen -->
+    <div id="gameScreen" class="hidden" style="height:100%; display:flex; flex-direction:column; padding:24px; gap:16px;">
+      <!-- Header: title + scores -->
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+        <div style="font-family:'Fredoka',sans-serif; font-size:2.2rem; font-weight:700; color:var(--accent);" id="gameTitle">Jeoparty</div>
+        <div id="roundBadge" style="font-family:'Fredoka',sans-serif; font-size:1.2rem; color:var(--muted);"></div>
+        <div id="presenterScores" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap;"></div>
+      </div>
+      <!-- Board -->
+      <div id="presenterBoard" class="presenter-board-grid" style="flex:1; min-height:0;"></div>
+    </div>
 
-        <article class="card grid">
-          <h2>Active Question</h2>
-          <p id="questionText" class="small">No question open.</p>
-          <p id="answerText" class="hidden"></p>
-          <button id="toggleAnswer" class="secondary">Reveal Answer</button>
-          <div id="judgeButtons" class="grid"></div>
-        </article>
+    <!-- Question overlay -->
+    <div id="questionOverlay" class="question-overlay hidden">
+      <div class="q-category" id="qCategory"></div>
+      <div class="q-value" id="qValue"></div>
+      <div class="q-text" id="qText"></div>
+      <div id="buzzBanner" class="buzz-banner hidden"></div>
+    </div>
 
-        <article class="card grid">
-          <h2>Manual Score</h2>
-          <select id="scorePlayer"></select>
-          <input id="scoreValue" type="number" />
-          <button id="applyScore" class="secondary">Apply</button>
-        </article>
+    <!-- Round advance notification -->
+    <div id="roundNotif" class="hidden" style="position:absolute;inset:0;background:rgba(10,5,30,0.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:50;animation:slide-up .3s ease;">
+      <div style="font-family:'Fredoka',sans-serif;font-size:3rem;color:var(--muted);">Next Up</div>
+      <div id="roundNotifTitle" style="font-family:'Fredoka',sans-serif;font-size:6rem;font-weight:700;color:var(--accent);"></div>
+    </div>
 
-        <article class="card grid">
-          <h2>Final Jeopardy Judging</h2>
-          <div id="finalList" class="grid"></div>
-        </article>
-      </section>
-    </main>
+    <!-- Host controls link (corner) -->
+    <a href={`/game/${gameId}/host`} style="position:absolute;top:16px;right:16px;font-size:0.8rem;color:var(--muted);opacity:0.4;" title="Host Controls">⚙ Host</a>
+  </div>
 
-    <script is:inline id="host-seed" type="application/json">
-      {JSON.stringify({
-        board,
-        usedQuestionIds: usedRows.map((u) => u.question_id),
-        initialPlayers: players.map((p) => [p.id, { id: p.id, displayName: p.display_name, score: p.score }])
-      })}
-    </script>
-    <script is:inline type="module">import '/src/scripts/host-game.ts';</script>
-  </body>
+  <script is:inline define:vars={{ gameId }}>
+    // @ts-nocheck
+    /* ── Scaling ───────────────────────────────────────────────────────────── */
+    function scale() {
+      const root = document.getElementById('scale-root');
+      const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+      root.style.transform = `scale(${s})`;
+      document.body.style.width = '1920px';
+      document.body.style.height = '1080px';
+      document.body.style.overflow = 'hidden';
+    }
+    scale();
+    window.addEventListener('resize', scale);
+
+    /* ── State ─────────────────────────────────────────────────────────────── */
+    let gameState = { board: null, usedQuestions: new Set(), scores: [], teams: [], currentPicker: null, currentRound: 0, totalRounds: 1, teamMode: false };
+    let offset = 0;
+
+    const lobbyScreen    = document.getElementById('lobbyScreen');
+    const gameScreen     = document.getElementById('gameScreen');
+    const questionOverlay = document.getElementById('questionOverlay');
+    const presenterBoard = document.getElementById('presenterBoard');
+    const presenterScores = document.getElementById('presenterScores');
+    const roundBadge     = document.getElementById('roundBadge');
+    const playerList     = document.getElementById('playerList');
+    const buzzBanner     = document.getElementById('buzzBanner');
+    const roundNotif     = document.getElementById('roundNotif');
+    const roundNotifTitle = document.getElementById('roundNotifTitle');
+
+    /* ── WebSocket ─────────────────────────────────────────────────────────── */
+    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}`;
+    let ws;
+    function connect() {
+      ws = new WebSocket(wsUrl);
+      ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'PING' })));
+      ws.addEventListener('close', () => setTimeout(connect, 2000));
+      ws.addEventListener('message', onMessage);
+    }
+    connect();
+
+    function onMessage(event) {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === 'PONG') { offset = msg.serverTime - Date.now(); }
+
+      if (msg.type === 'BOARD_STATE') {
+        gameState.board = msg.board;
+        gameState.usedQuestions = new Set(msg.usedQuestions || []);
+        gameState.scores = msg.scores || [];
+        gameState.teams = msg.teams || [];
+        gameState.currentPicker = msg.currentPicker;
+        gameState.currentRound = msg.currentRound ?? 0;
+        gameState.totalRounds = msg.totalRounds ?? 1;
+        gameState.teamMode = msg.teamMode ?? false;
+        renderBoard();
+        renderScores();
+        updateRoundBadge();
+      }
+
+      if (msg.type === 'PLAYER_JOINED') {
+        const chip = document.createElement('div');
+        chip.id = 'pl-' + msg.playerId;
+        chip.style.cssText = 'background:rgba(74,48,160,0.5);border:1px solid var(--border);border-radius:12px;padding:.4rem 1rem;font-family:Fredoka,sans-serif;font-size:1.1rem;';
+        chip.textContent = msg.displayName;
+        playerList.appendChild(chip);
+      }
+
+      if (msg.type === 'PLAYER_KICKED') {
+        document.getElementById('pl-' + msg.playerId)?.remove();
+      }
+
+      if (msg.type === 'GAME_START') {
+        lobbyScreen.classList.add('hidden');
+        gameScreen.classList.remove('hidden');
+      }
+
+      if (msg.type === 'QUESTION_OPEN') {
+        buzzBanner.classList.add('hidden');
+        document.getElementById('qCategory').textContent = msg.categoryTitle;
+        document.getElementById('qValue').textContent = '$' + msg.value + (msg.isDailyDouble ? ' ★ Daily Double' : '');
+        document.getElementById('qText').textContent = msg.questionText;
+        questionOverlay.classList.remove('hidden');
+      }
+
+      if (msg.type === 'BUZZ_WINNER') {
+        buzzBanner.textContent = '🎤 ' + msg.displayName;
+        buzzBanner.classList.remove('hidden');
+      }
+
+      if (msg.type === 'QUESTION_CLOSED') {
+        questionOverlay.classList.add('hidden');
+        buzzBanner.classList.add('hidden');
+      }
+
+      if (msg.type === 'SCORE_UPDATE') {
+        gameState.scores = msg.scores || gameState.scores;
+        gameState.teams = msg.teams || gameState.teams;
+        renderScores();
+      }
+
+      if (msg.type === 'ROUND_ADVANCE') {
+        roundNotifTitle.textContent = msg.roundTitle;
+        roundNotif.classList.remove('hidden');
+        setTimeout(() => roundNotif.classList.add('hidden'), 3500);
+      }
+
+      if (msg.type === 'START_FINAL_JEOPARDY') {
+        questionOverlay.classList.add('hidden');
+        document.getElementById('qCategory').textContent = 'FINAL JEOPARDY';
+        document.getElementById('qValue').textContent = '';
+        document.getElementById('qText').textContent = 'Players are entering their wagers...';
+        questionOverlay.classList.remove('hidden');
+      }
+
+      if (msg.type === 'FINAL_JEOPARDY_START') {
+        document.getElementById('qText').textContent = msg.questionText;
+      }
+
+      if (msg.type === 'GAME_OVER') {
+        gameState.scores = msg.scores || gameState.scores;
+        gameState.teams = msg.teams || gameState.teams;
+        renderScores();
+        questionOverlay.classList.add('hidden');
+        const winner = [...gameState.scores].sort((a, b) => b.score - a.score)[0];
+        if (winner) {
+          document.getElementById('qCategory').textContent = 'GAME OVER';
+          document.getElementById('qValue').textContent = '';
+          document.getElementById('qText').textContent = `🏆 ${winner.displayName} wins!`;
+          questionOverlay.classList.remove('hidden');
+        }
+      }
+    }
+
+    /* ── Render board ──────────────────────────────────────────────────────── */
+    function renderBoard() {
+      if (!gameState.board) return;
+      const cats = gameState.board.categories || [];
+      const numCats = cats.length;
+      if (!numCats) return;
+      const maxQ = Math.max(...cats.map((c) => c.questions.length));
+      presenterBoard.style.gridTemplateColumns = `repeat(${numCats}, 1fr)`;
+      presenterBoard.innerHTML = '';
+      // Headers row
+      for (const cat of cats) {
+        const h = document.createElement('div');
+        h.className = 'presenter-cat-header';
+        h.textContent = cat.title;
+        presenterBoard.appendChild(h);
+      }
+      // Question rows
+      for (let qi = 0; qi < maxQ; qi++) {
+        for (const cat of cats) {
+          const q = cat.questions.sort((a, b) => a.value - b.value)[qi];
+          const cell = document.createElement('div');
+          cell.className = 'presenter-q-cell' + (q && gameState.usedQuestions.has(q.id) ? ' used' : '');
+          cell.textContent = q ? '$' + q.value : '';
+          presenterBoard.appendChild(cell);
+        }
+      }
+    }
+
+    /* ── Render scores ─────────────────────────────────────────────────────── */
+    function renderScores() {
+      presenterScores.innerHTML = '';
+      const items = gameState.teamMode && gameState.teams.length
+        ? gameState.teams.map((t) => ({ name: t.name, score: t.score })).sort((a, b) => b.score - a.score)
+        : [...gameState.scores].sort((a, b) => b.score - a.score).map((s) => ({ name: s.displayName, score: s.score }));
+      for (const item of items) {
+        const chip = document.createElement('div');
+        chip.style.cssText = 'font-family:Fredoka,sans-serif;font-size:1.3rem;background:rgba(34,22,80,.7);border:1px solid var(--border);border-radius:12px;padding:.35rem 1rem;white-space:nowrap;';
+        chip.innerHTML = `<span>${item.name}</span> <strong style="color:var(--accent);margin-left:.5rem;">$${item.score}</strong>`;
+        presenterScores.appendChild(chip);
+      }
+    }
+
+    function updateRoundBadge() {
+      if (gameState.totalRounds > 1) {
+        roundBadge.textContent = `Round ${gameState.currentRound + 1} of ${gameState.totalRounds}`;
+      }
+    }
+  </script>
+</body>
 </html>

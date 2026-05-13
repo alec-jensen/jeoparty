@@ -1,0 +1,33 @@
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpassword
+      MARIADB_DATABASE: jeoparty
+      MARIADB_USER: jeoparty
+      MARIADB_PASSWORD: jeoparty
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "jeoparty", "-pjeoparty"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: mysql://jeoparty:jeoparty@db:3306/jeoparty
+      JWT_SECRET: change-me-in-production
+      PORT: "3000"
+      # DISABLE_REGISTRATION: "true"
+
+volumes:
+  db_data:

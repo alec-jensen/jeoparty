@@ -1,161 +1,204 @@
 ---
 import '@/styles/global.css';
-import { query } from '@/lib/db';
+import { db, schema } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 
 if (!Astro.locals.host) return Astro.redirect('/');
 const boardId = Number(Astro.params.id);
-const boards = await query<any[]>('SELECT id, host_id, title FROM boards WHERE id = ?', [boardId]);
-if (!boards.length || boards[0].host_id !== Astro.locals.host.hostId) return Astro.redirect('/dashboard');
+const boards = await db.select({ id: schema.boards.id, hostId: schema.boards.hostId, title: schema.boards.title })
+  .from(schema.boards).where(eq(schema.boards.id, boardId));
+if (!boards.length || boards[0].hostId !== Astro.locals.host.hostId) return Astro.redirect('/dashboard');
 const boardTitle = boards[0].title;
 ---
 <html lang="en">
-  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Edit Board</title></head>
-  <body>
-    <main class="page grid">
-      <section class="card" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
-        <h1>Editing: <span id="boardName">{boardTitle}</span></h1>
-        <div style="display:flex;gap:.5rem;">
-          <button id="save">Save Board</button>
-          <a href="/dashboard"><button class="secondary">Back</button></a>
-        </div>
-      </section>
-
-      <section class="card grid">
-        <label>Board title <input id="title" /></label>
-        <button id="addCategory" class="secondary">+ Add Category</button>
-      </section>
-
-      <section id="categories" class="grid"></section>
-      <p id="status" class="small"></p>
-    </main>
-
-    <template id="categoryTpl">
-      <article class="card grid category">
-        <div style="display:flex;gap:.5rem;align-items:center;">
-          <input class="cat-title" placeholder="Category title" />
-          <button class="remove-category secondary" type="button">Remove</button>
-        </div>
-        <div class="questions grid"></div>
-        <button class="add-question secondary" type="button">+ Add Question</button>
-      </article>
-    </template>
-
-    <template id="questionTpl">
-      <div class="card question" style="background:#1f103f;">
-        <div class="grid" style="grid-template-columns:1fr auto;align-items:center;">
-          <label>Value <input class="q-value" type="number" min="0" step="100" /></label>
-          <label style="display:flex;gap:.35rem;align-items:center;">Daily Double <input class="q-dd" type="checkbox" style="width:auto;" /></label>
-        </div>
-        <label>Question <textarea class="q-question"></textarea></label>
-        <label>Answer <textarea class="q-answer"></textarea></label>
-        <button class="remove-question secondary" type="button">Remove Question</button>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width" />
+  <title>Edit Board — {boardTitle}</title>
+  <style>
+    .round-block { border: 2px solid var(--border); border-radius: 16px; padding: 1rem; background: rgba(14,8,40,.5); }
+    .round-header { display:flex; justify-content:space-between; align-items:center; gap:.75rem; margin-bottom:.75rem; }
+    .question-card { background: rgba(10,5,30,.7); border: 1px solid var(--border); border-radius: 12px; padding: .85rem; }
+    label span { display:block; font-size:.82rem; color:var(--muted); margin-bottom:.2rem; }
+  </style>
+</head>
+<body>
+  <main class="page grid" style="max-width:960px;">
+    <div class="flex-between card">
+      <h1 style="font-size:1.6rem;">Editing: <span id="boardName">{boardTitle}</span></h1>
+      <div class="flex" style="flex-wrap:wrap; gap:.5rem;">
+        <button id="addRound" class="secondary">+ Add Round</button>
+        <button id="save" class="accent">Save Board</button>
+        <a href="/dashboard"><button class="secondary">← Back</button></a>
       </div>
-    </template>
+    </div>
 
-    <script>
-      // @ts-nocheck
-      const boardId = Number(location.pathname.split('/').pop());
-      const categoriesEl = document.getElementById('categories');
-      const categoryTpl = document.getElementById('categoryTpl');
-      const questionTpl = document.getElementById('questionTpl');
-      const statusEl = document.getElementById('status');
-      let dirty = false;
+    <div class="card">
+      <label><span>Board Title</span><input id="title" value={boardTitle} style="font-size:1.05rem;" /></label>
+    </div>
 
-      function setDirty(v = true) {
-        dirty = v;
-        statusEl.textContent = dirty ? 'Unsaved changes' : 'All changes saved';
-      }
-      window.addEventListener('beforeunload', (e) => {
-        if (!dirty) return;
-        e.preventDefault();
-      });
+    <div id="rounds" class="grid" style="gap:1.25rem;"></div>
+    <p id="status" class="small" style="text-align:center; min-height:1.2em;"></p>
+  </main>
 
-      function addQuestion(container, data = {}) {
-        const node = questionTpl.content.firstElementChild.cloneNode(true);
-        if (data.id) node.dataset.id = data.id;
-        node.querySelector('.q-value').value = data.value ?? 200;
-        node.querySelector('.q-question').value = data.question ?? '';
-        node.querySelector('.q-answer').value = data.answer ?? '';
-        node.querySelector('.q-dd').checked = !!data.isDailyDouble;
-        node.querySelector('.remove-question').addEventListener('click', () => {
-          node.remove();
-          setDirty();
-        });
-        node.querySelectorAll('input,textarea').forEach((el) => el.addEventListener('input', () => setDirty()));
-        container.appendChild(node);
-      }
+  <!-- Templates -->
+  <template id="roundTpl">
+    <div class="round-block round">
+      <div class="round-header">
+        <input class="round-title" placeholder="Round title" style="font-size:1.1rem; font-family:'Fredoka',sans-serif; font-weight:600; max-width:260px;" />
+        <div class="flex" style="gap:.5rem; flex-wrap:wrap;">
+          <button class="add-category secondary" type="button" style="font-size:.85rem;">+ Category</button>
+          <button class="remove-round secondary" type="button" style="font-size:.85rem; color:var(--bad);">Remove Round</button>
+        </div>
+      </div>
+      <div class="categories" style="display:grid; gap:.75rem;"></div>
+    </div>
+  </template>
 
-      function addCategory(data = {}) {
-        const node = categoryTpl.content.firstElementChild.cloneNode(true);
-        if (data.id) node.dataset.id = data.id;
-        node.querySelector('.cat-title').value = data.title ?? '';
-        const questionsContainer = node.querySelector('.questions');
-        (data.questions ?? []).forEach((q) => addQuestion(questionsContainer, q));
-        node.querySelector('.add-question').addEventListener('click', () => {
-          addQuestion(questionsContainer, { value: 200 });
-          setDirty();
-        });
-        node.querySelector('.remove-category').addEventListener('click', () => {
-          node.remove();
-          setDirty();
-        });
-        node.querySelectorAll('input,textarea').forEach((el) => el.addEventListener('input', () => setDirty()));
-        categoriesEl.appendChild(node);
-      }
+  <template id="categoryTpl">
+    <div class="card category" style="padding:.85rem;">
+      <div class="flex-between" style="margin-bottom:.6rem;">
+        <input class="cat-title" placeholder="Category title" style="font-size:1rem; max-width:240px;" />
+        <button class="remove-category secondary" type="button" style="font-size:.8rem; padding:.3rem .7rem; color:var(--bad);">Remove</button>
+      </div>
+      <div class="questions grid" style="gap:.65rem;"></div>
+      <button class="add-question secondary" type="button" style="margin-top:.5rem; font-size:.82rem;">+ Question</button>
+    </div>
+  </template>
 
-      function readBoard() {
-        const categories = Array.from(document.querySelectorAll('.category')).map((catNode, ci) => ({
-          id: catNode.dataset.id ? Number(catNode.dataset.id) : undefined,
-          title: catNode.querySelector('.cat-title').value,
-          position: ci,
-          questions: Array.from(catNode.querySelectorAll('.question')).map((qNode, qi) => ({
-            id: qNode.dataset.id ? Number(qNode.dataset.id) : undefined,
-            value: Number(qNode.querySelector('.q-value').value || 0),
-            question: qNode.querySelector('.q-question').value,
-            answer: qNode.querySelector('.q-answer').value,
-            isDailyDouble: qNode.querySelector('.q-dd').checked,
-            position: qi
-          }))
-        }));
+  <template id="questionTpl">
+    <div class="question-card question grid" style="gap:.5rem;">
+      <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:.5rem; align-items:end;">
+        <label><span>Value ($)</span><input class="q-value" type="number" min="0" step="100" /></label>
+        <label style="display:flex; align-items:center; gap:.4rem; padding-top:1.2rem;">
+          <input class="q-dd" type="checkbox" style="width:auto;" />
+          <span style="font-size:.85rem; color:var(--muted);">Daily Double</span>
+        </label>
+        <button class="remove-question secondary" type="button" style="font-size:.78rem; padding:.3rem .6rem; color:var(--bad); align-self:end;">✕</button>
+      </div>
+      <label><span>Question</span><textarea class="q-question" rows="2" style="resize:vertical;"></textarea></label>
+      <label><span>Answer</span><textarea class="q-answer" rows="1" style="resize:vertical;"></textarea></label>
+    </div>
+  </template>
 
-        return {
-          title: document.getElementById('title').value,
-          categories
-        };
-      }
+  <script is:inline>
+    // @ts-nocheck
+    const boardId = Number(location.pathname.split('/').pop());
+    const roundsEl    = document.getElementById('rounds');
+    const roundTpl    = document.getElementById('roundTpl');
+    const categoryTpl = document.getElementById('categoryTpl');
+    const questionTpl = document.getElementById('questionTpl');
+    const statusEl    = document.getElementById('status');
+    let dirty = false;
 
-      async function loadBoard() {
-        const res = await fetch(`/api/boards/${boardId}`);
-        if (!res.ok) return;
-        const board = await res.json();
-        document.getElementById('title').value = board.title;
-        document.getElementById('boardName').textContent = board.title;
-        categoriesEl.innerHTML = '';
-        board.categories.forEach((cat) => addCategory(cat));
-        setDirty(false);
-      }
+    function setDirty(v = true) {
+      dirty = v;
+      statusEl.textContent = dirty ? '● Unsaved changes' : '✓ All saved';
+      statusEl.style.color = dirty ? 'var(--muted)' : 'var(--ok)';
+    }
+    window.addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
 
-      document.getElementById('addCategory').addEventListener('click', () => {
-        addCategory({ title: 'New Category', questions: [] });
+    function addQuestion(container, data = {}) {
+      const node = questionTpl.content.firstElementChild.cloneNode(true);
+      if (data.id) node.dataset.id = data.id;
+      node.querySelector('.q-value').value = data.value ?? 200;
+      node.querySelector('.q-question').value = data.question ?? '';
+      node.querySelector('.q-answer').value = data.answer ?? '';
+      node.querySelector('.q-dd').checked = !!data.isDailyDouble;
+      node.querySelector('.remove-question').addEventListener('click', () => { node.remove(); setDirty(); });
+      node.querySelectorAll('input,textarea').forEach((el) => el.addEventListener('input', () => setDirty()));
+      container.appendChild(node);
+    }
+
+    function addCategory(roundNode, data = {}) {
+      const node = categoryTpl.content.firstElementChild.cloneNode(true);
+      if (data.id) node.dataset.id = data.id;
+      node.querySelector('.cat-title').value = data.title ?? '';
+      const qContainer = node.querySelector('.questions');
+      (data.questions ?? []).forEach((q) => addQuestion(qContainer, q));
+      node.querySelector('.add-question').addEventListener('click', () => { addQuestion(qContainer, { value: 200 }); setDirty(); });
+      node.querySelector('.remove-category').addEventListener('click', () => { node.remove(); setDirty(); });
+      node.querySelectorAll('input,textarea').forEach((el) => el.addEventListener('input', () => setDirty()));
+      roundNode.querySelector('.categories').appendChild(node);
+    }
+
+    function addRound(data = {}) {
+      const node = roundTpl.content.firstElementChild.cloneNode(true);
+      if (data.id) node.dataset.id = data.id;
+      node.querySelector('.round-title').value = data.title ?? 'Round ' + (roundsEl.querySelectorAll('.round').length + 1);
+      (data.categories ?? []).forEach((cat) => addCategory(node, cat));
+      node.querySelector('.add-category').addEventListener('click', () => {
+        addCategory(node, { title: 'New Category', questions: [] });
         setDirty();
       });
-
-      document.getElementById('title').addEventListener('input', () => {
-        document.getElementById('boardName').textContent = document.getElementById('title').value;
+      node.querySelector('.remove-round').addEventListener('click', () => {
+        if (roundsEl.querySelectorAll('.round').length <= 1) { alert('A board must have at least one round.'); return; }
+        node.remove();
         setDirty();
       });
+      node.querySelector('.round-title').addEventListener('input', () => setDirty());
+      roundsEl.appendChild(node);
+    }
 
-      document.getElementById('save').addEventListener('click', async () => {
-        const res = await fetch(`/api/boards/${boardId}`, {
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(readBoard())
-        });
-        if (!res.ok) return alert('Save failed');
-        setDirty(false);
+    function readBoard() {
+      return {
+        title: document.getElementById('title').value,
+        rounds: Array.from(roundsEl.querySelectorAll('.round')).map((rNode, ri) => ({
+          id: rNode.dataset.id ? Number(rNode.dataset.id) : undefined,
+          title: rNode.querySelector('.round-title').value,
+          position: ri,
+          categories: Array.from(rNode.querySelectorAll('.category')).map((cNode, ci) => ({
+            id: cNode.dataset.id ? Number(cNode.dataset.id) : undefined,
+            title: cNode.querySelector('.cat-title').value,
+            position: ci,
+            questions: Array.from(cNode.querySelectorAll('.question')).map((qNode, qi) => ({
+              id: qNode.dataset.id ? Number(qNode.dataset.id) : undefined,
+              value: Number(qNode.querySelector('.q-value').value || 0),
+              question: qNode.querySelector('.q-question').value,
+              answer: qNode.querySelector('.q-answer').value,
+              isDailyDouble: qNode.querySelector('.q-dd').checked,
+              position: qi,
+            })),
+          })),
+        })),
+      };
+    }
+
+    async function loadBoard() {
+      const res = await fetch(`/api/boards/${boardId}`);
+      if (!res.ok) return;
+      const board = await res.json();
+      document.getElementById('title').value = board.title;
+      document.getElementById('boardName').textContent = board.title;
+      roundsEl.innerHTML = '';
+      (board.rounds ?? []).forEach((r) => addRound(r));
+      if (!board.rounds?.length) addRound({ title: 'Round 1' });
+      setDirty(false);
+    }
+
+    document.getElementById('addRound').addEventListener('click', () => {
+      addRound({ title: 'Round ' + (roundsEl.querySelectorAll('.round').length + 1) });
+      setDirty();
+    });
+
+    document.getElementById('title').addEventListener('input', () => {
+      document.getElementById('boardName').textContent = document.getElementById('title').value;
+      setDirty();
+    });
+
+    document.getElementById('save').addEventListener('click', async () => {
+      statusEl.textContent = 'Saving...';
+      const res = await fetch(`/api/boards/${boardId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(readBoard()),
       });
+      if (!res.ok) { statusEl.textContent = '✗ Save failed'; statusEl.style.color = 'var(--bad)'; return; }
+      // Re-load to get IDs for new items
+      await loadBoard();
+    });
 
-      loadBoard();
-    </script>
-  </body>
+    loadBoard();
+  </script>
+</body>
 </html>

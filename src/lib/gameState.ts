@@ -1,4 +1,5 @@
-import { query } from '@/lib/db';
+import { eq, inArray, and } from 'drizzle-orm';
+import { db, schema, isSqlite } from '@/lib/db';
 
 export interface QuestionData {
   id: number;
@@ -16,10 +17,24 @@ export interface CategoryData {
   questions: QuestionData[];
 }
 
+export interface RoundData {
+  id: number;
+  title: string;
+  position: number;
+  categories: CategoryData[];
+}
+
 export interface BoardData {
   id: number;
   title: string;
-  categories: CategoryData[];
+  rounds: RoundData[];
+}
+
+export interface TeamData {
+  id: number;
+  name: string;
+  position: number;
+  playerIds: string[];
 }
 
 export interface ActiveGame {
@@ -27,10 +42,13 @@ export interface ActiveGame {
   boardId: number;
   hostSocketId: string;
   status: 'lobby' | 'active' | 'final_jeopardy' | 'finished';
-  players: Map<string, { displayName: string; score: number; socketId: string }>;
+  players: Map<string, { displayName: string; score: number; socketId: string; teamId: number | null }>;
+  teams: Map<number, TeamData>;
+  teamMode: boolean;
   board: BoardData;
   usedQuestions: Set<number>;
   currentPicker: string | null;
+  currentRound: number;
   currentQuestion: {
     questionId: number;
     value: number;
@@ -52,62 +70,105 @@ export interface ActiveGame {
 const activeGames = new Map<string, ActiveGame>();
 
 export async function loadBoard(boardId: number): Promise<BoardData> {
-  const boardRows = await query<any[]>('SELECT id, title FROM boards WHERE id = ?', [boardId]);
+  const boardRows = await db.select({ id: schema.boards.id, title: schema.boards.title })
+    .from(schema.boards).where(eq(schema.boards.id, boardId));
   if (!boardRows.length) throw new Error('Board not found');
-  const categoryRows = await query<any[]>('SELECT id, title, position FROM categories WHERE board_id = ? ORDER BY position ASC', [boardId]);
-  const questionRows = await query<any[]>(
-    'SELECT id, category_id, value, question, answer, is_daily_double, position FROM questions WHERE category_id IN (?) ORDER BY position ASC',
-    [categoryRows.length ? categoryRows.map((c) => c.id) : [0]]
-  );
-  const byCategory = new Map<number, QuestionData[]>();
-  for (const row of questionRows) {
-    const q: QuestionData = {
-      id: row.id,
-      value: row.value,
-      question: row.question,
-      answer: row.answer,
-      isDailyDouble: !!row.is_daily_double,
-      position: row.position
-    };
-    const list = byCategory.get(row.category_id) ?? [];
-    list.push(q);
-    byCategory.set(row.category_id, list);
+
+  const roundRows = await db.select()
+    .from(schema.rounds)
+    .where(eq(schema.rounds.boardId, boardId))
+    .orderBy(schema.rounds.position);
+
+  if (!roundRows.length) {
+    return { id: boardRows[0].id, title: boardRows[0].title, rounds: [] };
+  }
+
+  const roundIds = roundRows.map((r) => r.id);
+  const categoryRows = await db.select()
+    .from(schema.categories)
+    .where(inArray(schema.categories.roundId, roundIds))
+    .orderBy(schema.categories.position);
+
+  const categoryIds = categoryRows.map((c) => c.id);
+  const questionRows = categoryIds.length
+    ? await db.select().from(schema.questions)
+        .where(inArray(schema.questions.categoryId, categoryIds))
+        .orderBy(schema.questions.position)
+    : [];
+
+  const questionsByCategory = new Map<number, QuestionData[]>();
+  for (const q of questionRows) {
+    const list = questionsByCategory.get(q.categoryId) ?? [];
+    list.push({ id: q.id, value: q.value, question: q.question, answer: q.answer, isDailyDouble: !!q.isDailyDouble, position: q.position });
+    questionsByCategory.set(q.categoryId, list);
+  }
+
+  const categoriesByRound = new Map<number, CategoryData[]>();
+  for (const c of categoryRows) {
+    const list = categoriesByRound.get(c.roundId) ?? [];
+    list.push({ id: c.id, title: c.title, position: c.position, questions: questionsByCategory.get(c.id) ?? [] });
+    categoriesByRound.set(c.roundId, list);
   }
 
   return {
     id: boardRows[0].id,
     title: boardRows[0].title,
-    categories: categoryRows.map((cat) => ({
-      id: cat.id,
-      title: cat.title,
-      position: cat.position,
-      questions: byCategory.get(cat.id) ?? []
-    }))
+    rounds: roundRows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      position: r.position,
+      categories: categoriesByRound.get(r.id) ?? [],
+    })),
   };
 }
 
-export async function getOrCreateGame(gameId: string) {
+export async function getOrCreateGame(gameId: string): Promise<ActiveGame | null> {
   const existing = activeGames.get(gameId);
   if (existing) return existing;
 
-  const gameRows = await query<any[]>('SELECT id, board_id, status, current_picker_id FROM games WHERE id = ?', [gameId]);
+  const gameRows = await db.select().from(schema.games).where(eq(schema.games.id, gameId));
   if (!gameRows.length) return null;
   const game = gameRows[0];
-  const board = await loadBoard(game.board_id);
-  const players = await query<any[]>('SELECT id, display_name, score, socket_id FROM players WHERE game_id = ?', [gameId]);
-  const usedRows = await query<any[]>('SELECT question_id FROM used_questions WHERE game_id = ?', [gameId]);
+
+  const board = await loadBoard(game.boardId);
+
+  const playerRows = await db.select().from(schema.players).where(eq(schema.players.gameId, gameId));
+  const teamRows = await db.select().from(schema.teams).where(eq(schema.teams.gameId, gameId));
+  const usedRows = await db.select({ questionId: schema.usedQuestions.questionId })
+    .from(schema.usedQuestions).where(eq(schema.usedQuestions.gameId, gameId));
+
+  const teamsMap = new Map<number, TeamData>();
+  for (const t of teamRows) {
+    teamsMap.set(t.id, { id: t.id, name: t.name, position: t.position, playerIds: [] });
+  }
+
+  const playersMap = new Map<string, { displayName: string; score: number; socketId: string; teamId: number | null }>();
+  for (const p of playerRows) {
+    playersMap.set(p.id, {
+      displayName: p.displayName,
+      score: p.score ?? 0,
+      socketId: p.socketId ?? '',
+      teamId: p.teamId ?? null,
+    });
+    if (p.teamId != null) {
+      teamsMap.get(p.teamId)?.playerIds.push(p.id);
+    }
+  }
 
   const active: ActiveGame = {
     gameId,
-    boardId: game.board_id,
+    boardId: game.boardId,
     hostSocketId: '',
-    status: game.status,
-    players: new Map(players.map((p) => [p.id, { displayName: p.display_name, score: p.score, socketId: p.socket_id ?? '' }])),
+    status: game.status as ActiveGame['status'],
+    players: playersMap,
+    teams: teamsMap,
+    teamMode: !!game.teamMode,
     board,
-    usedQuestions: new Set(usedRows.map((u) => u.question_id)),
-    currentPicker: game.current_picker_id,
+    usedQuestions: new Set(usedRows.map((u) => u.questionId)),
+    currentPicker: game.currentPickerId ?? null,
+    currentRound: game.currentRound ?? 0,
     currentQuestion: null,
-    finalJeopardy: null
+    finalJeopardy: null,
   };
   activeGames.set(gameId, active);
   return active;
@@ -122,28 +183,87 @@ export function getAllGames() {
 }
 
 export async function setGameStatus(gameId: string, status: ActiveGame['status']) {
-  await query('UPDATE games SET status = ? WHERE id = ?', [status, gameId]);
+  await db.update(schema.games).set({ status }).where(eq(schema.games.id, gameId));
   const g = activeGames.get(gameId);
   if (g) g.status = status;
 }
 
 export async function persistPlayerScore(gameId: string, playerId: string, score: number) {
-  await query('UPDATE players SET score = ? WHERE id = ? AND game_id = ?', [score, playerId, gameId]);
+  await db.update(schema.players).set({ score }).where(eq(schema.players.id, playerId));
 }
 
 export async function markQuestionUsed(gameId: string, questionId: number) {
-  await query('INSERT IGNORE INTO used_questions (game_id, question_id) VALUES (?, ?)', [gameId, questionId]);
+  if (isSqlite()) {
+    // SQLite: check-before-insert (safe to call multiple times)
+    const existing = await db.select().from(schema.usedQuestions)
+      .where(and(eq(schema.usedQuestions.gameId, gameId), eq(schema.usedQuestions.questionId, questionId)));
+    if (!existing.length) {
+      await db.insert(schema.usedQuestions).values({ gameId, questionId });
+    }
+  } else {
+    // MySQL: use onDuplicateKeyUpdate for efficiency
+    await db.insert(schema.usedQuestions).values({ gameId, questionId }).onDuplicateKeyUpdate({ set: { gameId } });
+  }
 }
 
 export function scoreList(game: ActiveGame) {
-  return Array.from(game.players.entries()).map(([id, p]) => ({ playerId: id, displayName: p.displayName, score: p.score }));
+  const list = Array.from(game.players.entries()).map(([id, p]) => ({
+    playerId: id,
+    displayName: p.displayName,
+    score: p.score,
+    teamId: p.teamId,
+  }));
+
+  if (!game.teamMode) return list;
+
+  // Build team scores
+  const teamScores = new Map<number, number>();
+  for (const [, p] of game.players) {
+    if (p.teamId != null) {
+      teamScores.set(p.teamId, (teamScores.get(p.teamId) ?? 0) + p.score);
+    }
+  }
+
+  return list.map((p) => ({
+    ...p,
+    teamScore: p.teamId != null ? (teamScores.get(p.teamId) ?? 0) : undefined,
+  }));
+}
+
+export function teamList(game: ActiveGame) {
+  if (!game.teamMode) return [];
+  const teamScores = new Map<number, number>();
+  for (const [, p] of game.players) {
+    if (p.teamId != null) {
+      teamScores.set(p.teamId, (teamScores.get(p.teamId) ?? 0) + p.score);
+    }
+  }
+  return Array.from(game.teams.values()).map((t) => ({
+    id: t.id,
+    name: t.name,
+    position: t.position,
+    score: teamScores.get(t.id) ?? 0,
+    playerIds: t.playerIds,
+  }));
+}
+
+export function currentRoundCategories(game: ActiveGame) {
+  return game.board.rounds[game.currentRound]?.categories ?? [];
 }
 
 export function boardState(game: ActiveGame) {
   return {
-    board: game.board,
+    board: {
+      id: game.board.id,
+      title: game.board.title,
+      categories: currentRoundCategories(game),
+    },
     usedQuestions: Array.from(game.usedQuestions.values()),
     scores: scoreList(game),
-    currentPicker: game.currentPicker
+    teams: teamList(game),
+    currentPicker: game.currentPicker,
+    currentRound: game.currentRound,
+    totalRounds: game.board.rounds.length,
+    teamMode: game.teamMode,
   };
 }

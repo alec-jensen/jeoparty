@@ -1,57 +1,106 @@
 ---
 import '@/styles/global.css';
-const host = Astro.locals.host;
-if (host) return Astro.redirect('/dashboard');
+const nextParam = Astro.url.searchParams.get('next') ?? '';
+// Validate next: must be a relative path starting with /
+const safeNext = /^\/[a-zA-Z0-9/_-]/.test(nextParam) ? nextParam : '';
+if (Astro.locals.host) return Astro.redirect(safeNext || '/dashboard');
+const disableReg = process.env.DISABLE_REGISTRATION === 'true';
 ---
 <html lang="en">
-  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Jeoparty</title></head>
-  <body>
-    <main class="page grid" style="max-width:700px; padding-top:2rem;">
-      <section class="card">
-        <h1>JEOPARTY ⚡</h1>
-        <p class="small">Jackbox energy. Jeopardy brains. Your couch, your rules.</p>
-      </section>
-      <section class="card grid" style="grid-template-columns:1fr 1fr;">
-        <form id="loginForm" class="grid">
-          <h2>Host Login</h2>
-          <input name="email" type="email" placeholder="host@email.com" required />
-          <input name="password" type="password" placeholder="password" required />
-          <button type="submit">Login</button>
-        </form>
-        <form id="registerForm" class="grid">
-          <h2>Create Host</h2>
-          <input name="email" type="email" placeholder="host@email.com" required />
-          <input name="password" type="password" placeholder="min 6 chars" minlength="6" required />
-          <button type="submit">Register</button>
-        </form>
-      </section>
-      <p id="msg"></p>
-    </main>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width" />
+  <title>Jeoparty — Jackbox meets Jeopardy</title>
+</head>
+<body>
+  <main class="page">
+    <!-- Hero -->
+    <section class="hero">
+      <div class="logo">JEOPARTY</div>
+      <p class="tagline">Jackbox energy. Jeopardy brains. Your couch, your rules.</p>
+      <div style="margin-top:1.5rem; display:flex; gap:1rem; justify-content:center; flex-wrap:wrap;">
+        <a href="/join"><button class="accent" style="font-size:1.1rem; padding:.75rem 2rem;">Join a Game</button></a>
+        <a href="#host"><button class="secondary" style="font-size:1.1rem; padding:.75rem 2rem;">Host a Game</button></a>
+      </div>
+    </section>
 
-    <script>
-      // @ts-nocheck
-      const msg = document.getElementById('msg');
-      async function wire(formId, endpoint) {
-        const form = document.getElementById(formId);
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const fd = new FormData(form);
-          const body = Object.fromEntries(fd.entries());
-          const res = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body)
-          });
-          if (res.ok) {
-            location.href = '/dashboard';
-            return;
-          }
-          const json = await res.json().catch(() => ({}));
-          msg.textContent = json.error || 'Request failed';
+    <!-- How it works -->
+    <section class="grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:1rem; margin-top:2rem;">
+      <article class="card grid" style="text-align:center;">
+        <div style="font-size:2.5rem;">📺</div>
+        <h3>Big Screen</h3>
+        <p class="small">Open the game on your TV or projector. It auto-scales to fill any screen like Jackbox.</p>
+      </article>
+      <article class="card grid" style="text-align:center;">
+        <div style="font-size:2.5rem;">📱</div>
+        <h3>Phone Buzzers</h3>
+        <p class="small">Players join from their phones — no app install. Scan a QR code or enter the 4-letter game code.</p>
+      </article>
+      <article class="card grid" style="text-align:center;">
+        <div style="font-size:2.5rem;">🎮</div>
+        <h3>Host Controls</h3>
+        <p class="small">The host controls the game from their phone or a separate window — judge answers, manage scores, run Final Jeopardy.</p>
+      </article>
+      <article class="card grid" style="text-align:center;">
+        <div style="font-size:2.5rem;">🏆</div>
+        <h3>Custom Boards</h3>
+        <p class="small">Build your own categories and questions. Multiple rounds, Daily Doubles, Final Jeopardy — all included.</p>
+      </article>
+    </section>
+
+    <!-- Auth forms -->
+    <section id="host" class="card grid" style="max-width:680px; margin:2.5rem auto 0;">
+      <h2 style="text-align:center;">Host Sign In</h2>
+      <div class="grid" style="grid-template-columns:1fr 1fr; gap:1.5rem;">
+        <form id="loginForm" class="grid">
+          <h3>Log In</h3>
+          <input name="email" type="email" placeholder="email@example.com" required autocomplete="email" />
+          <input name="password" type="password" placeholder="Password" required autocomplete="current-password" />
+          <button type="submit">Log In</button>
+        </form>
+        {!disableReg && (
+          <form id="registerForm" class="grid">
+            <h3>Create Account</h3>
+            <input name="email" type="email" placeholder="email@example.com" required autocomplete="email" />
+            <input name="password" type="password" placeholder="Password (min 6 chars)" minlength="6" required autocomplete="new-password" />
+            <button type="submit" class="secondary">Register</button>
+          </form>
+        )}
+        {disableReg && (
+          <div class="card" style="display:flex;align-items:center;justify-content:center;opacity:.6;">
+            <p class="small">Registration is disabled on this server.</p>
+          </div>
+        )}
+      </div>
+      <p id="authMsg" class="small" style="text-align:center; min-height:1.2em;"></p>
+    </section>
+  </main>
+
+  <script is:inline>
+    // @ts-nocheck
+    const msg = document.getElementById('authMsg');
+    const params = new URLSearchParams(location.search);
+    const nextUrl = params.get('next') || '/dashboard';
+    function wire(formId, url, redirect) {
+      const form = document.getElementById(formId);
+      if (!form) return;
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        msg.textContent = '';
+        const body = Object.fromEntries(new FormData(form).entries());
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
         });
-      }
-      wire('loginForm', '/api/auth/login');
-      wire('registerForm', '/api/auth/register');
-    </script>
-  </body>
+        if (res.ok) { location.href = redirect; return; }
+        const json = await res.json().catch(() => ({}));
+        msg.textContent = json.error || 'Request failed.';
+        msg.style.color = 'var(--bad)';
+      });
+    }
+    wire('loginForm', '/api/auth/login', nextUrl);
+    wire('registerForm', '/api/auth/register', '/dashboard');
+  </script>
+</body>
 </html>

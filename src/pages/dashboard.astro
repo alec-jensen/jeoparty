@@ -1,63 +1,108 @@
 ---
 import '@/styles/global.css';
-import { query } from '@/lib/db';
+import { db, schema } from '@/lib/db';
+import { eq, desc } from 'drizzle-orm';
 
 if (!Astro.locals.host) return Astro.redirect('/');
-const boards = await query<any[]>('SELECT id, title, updated_at FROM boards WHERE host_id = ? ORDER BY updated_at DESC', [
-  Astro.locals.host.hostId
-]);
+const boards = await db.select({ id: schema.boards.id, title: schema.boards.title, updatedAt: schema.boards.updatedAt })
+  .from(schema.boards)
+  .where(eq(schema.boards.hostId, Astro.locals.host.hostId))
+  .orderBy(desc(schema.boards.updatedAt));
 ---
 <html lang="en">
-  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Dashboard</title></head>
-  <body>
-    <main class="page grid">
-      <section class="card" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width" />
+  <title>Dashboard — Jeoparty</title>
+</head>
+<body>
+  <main class="page grid">
+    <div class="card flex-between">
+      <div>
+        <h1 style="font-size:1.8rem;">Host Dashboard</h1>
+        <p class="small">{Astro.locals.host.email}</p>
+      </div>
+      <div class="flex" style="gap:.5rem; flex-wrap:wrap;">
+        <a href="/boards/new"><button class="accent">+ New Board</button></a>
+        <button id="logout" class="secondary">Log Out</button>
+      </div>
+    </div>
+
+    {boards.length === 0 && (
+      <div class="card" style="text-align:center; padding:2rem;">
+        <p class="muted" style="font-size:1.05rem;">No boards yet. Create one to get started!</p>
+      </div>
+    )}
+
+    {boards.map((board) => (
+      <article class="card flex-between">
         <div>
-          <h1>Host Dashboard</h1>
-          <p class="small">Welcome, {Astro.locals.host.email}</p>
+          <h3>{board.title}</h3>
+          <p class="small">Updated: {board.updatedAt ? new Date(board.updatedAt).toLocaleString() : '—'}</p>
         </div>
-        <div style="display:flex;gap:.5rem;">
-          <a href="/boards/new"><button>Create Board</button></a>
-          <button id="logout" class="secondary">Logout</button>
+        <div class="flex" style="gap:.5rem; flex-wrap:wrap;">
+          <a href={`/boards/${board.id}`}><button class="secondary">Edit</button></a>
+          <button class="start accent" data-board-id={board.id}>▶ Start Game</button>
         </div>
-      </section>
+      </article>
+    ))}
+  </main>
 
-      <section class="grid">
-        {boards.map((board) => (
-          <article class="card" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
-            <div>
-              <h3>{board.title}</h3>
-              <p class="small">Updated: {new Date(board.updated_at).toLocaleString()}</p>
-            </div>
-            <div style="display:flex;gap:.5rem;">
-              <a href={`/boards/${board.id}`}><button class="secondary">Edit</button></a>
-              <button class="start" data-board-id={board.id}>Start Game</button>
-            </div>
-          </article>
-        ))}
-        {!boards.length && <p class="card">No boards yet. Create one and start your first game.</p>}
-      </section>
-    </main>
+  <!-- Start game modal -->
+  <div id="startModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:100; align-items:center; justify-content:center;">
+    <div class="card grid" style="width:100%; max-width:400px; margin:1rem;">
+      <h2>Start Game</h2>
+      <label class="flex" style="gap:.5rem;">
+        <input id="teamModeCheck" type="checkbox" style="width:auto;" />
+        <span>Team Mode</span>
+      </label>
+      <div id="teamCountWrap" style="display:none;">
+        <label><span class="small">Number of Teams (2–6)</span>
+          <input id="numTeams" type="number" min="2" max="6" value="2" />
+        </label>
+      </div>
+      <div class="flex" style="gap:.5rem;">
+        <button id="confirmStart" class="accent" style="flex:1;">Start!</button>
+        <button id="cancelStart" class="secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
 
-    <script>
-      // @ts-nocheck
-      document.getElementById('logout').addEventListener('click', async () => {
-        await fetch('/api/auth/logout', { method: 'POST' });
-        location.href = '/';
+  <script is:inline>
+    // @ts-nocheck
+    let pendingBoardId = null;
+    const modal = document.getElementById('startModal');
+
+    document.getElementById('teamModeCheck').addEventListener('change', (e) => {
+      document.getElementById('teamCountWrap').style.display = e.target.checked ? '' : 'none';
+    });
+
+    for (const btn of document.querySelectorAll('.start')) {
+      btn.addEventListener('click', () => {
+        pendingBoardId = Number(btn.dataset.boardId);
+        modal.style.display = 'flex';
       });
-      for (const btn of document.querySelectorAll('.start')) {
-        btn.addEventListener('click', async () => {
-          const boardId = Number(btn.dataset.boardId);
-          const res = await fetch('/api/games/create', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ boardId })
-          });
-          if (!res.ok) return alert('Could not create game');
-          const json = await res.json();
-          location.href = `/game/${json.id}`;
-        });
-      }
-    </script>
-  </body>
+    }
+    document.getElementById('cancelStart').addEventListener('click', () => { modal.style.display = 'none'; });
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+
+    document.getElementById('confirmStart').addEventListener('click', async () => {
+      const teamMode = document.getElementById('teamModeCheck').checked;
+      const numTeams = teamMode ? Number(document.getElementById('numTeams').value) : 0;
+      const res = await fetch('/api/games/create', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ boardId: pendingBoardId, teamMode, numTeams }),
+      });
+      if (!res.ok) return alert('Could not create game');
+      const json = await res.json();
+      location.href = `/game/${json.id}`;
+    });
+
+    document.getElementById('logout').addEventListener('click', async () => {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      location.href = '/';
+    });
+  </script>
+</body>
 </html>

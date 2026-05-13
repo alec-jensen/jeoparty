@@ -1,7 +1,8 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { createHash } from 'node:crypto';
-import { query } from '@/lib/db';
+import { db, schema } from '@/lib/db';
+import { eq, and } from 'drizzle-orm';
 
 const jwtSecret: string = (() => {
   const value = process.env.JWT_SECRET;
@@ -36,10 +37,16 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 export async function issueHostToken(hostId: number, email: string) {
-  const result = await query<any>('INSERT INTO auth_tokens (host_id, token_hash) VALUES (?, ?)', [hostId, '']);
-  const tokenId = result.insertId as number;
+  const [{ id: tokenId }] = await db
+    .insert(schema.authTokens)
+    .values({ hostId, tokenHash: '' })
+    .$returningId();
+
   const token = jwt.sign({ hostId, email, tokenId }, jwtSecret, { expiresIn: '7d' });
-  await query('UPDATE auth_tokens SET token_hash = ? WHERE id = ?', [hashToken(token), tokenId]);
+  await db
+    .update(schema.authTokens)
+    .set({ tokenHash: hashToken(token) })
+    .where(eq(schema.authTokens.id, tokenId));
   return token;
 }
 
@@ -50,11 +57,16 @@ export function verifyJwt<T>(token: string) {
 export async function verifyHostToken(token: string): Promise<HostJwtPayload | null> {
   try {
     const payload = verifyJwt<HostJwtPayload>(token);
-    const rows = await query<any[]>('SELECT id FROM auth_tokens WHERE id = ? AND host_id = ? AND token_hash = ?', [
-      payload.tokenId,
-      payload.hostId,
-      hashToken(token)
-    ]);
+    const rows = await db
+      .select({ id: schema.authTokens.id })
+      .from(schema.authTokens)
+      .where(
+        and(
+          eq(schema.authTokens.id, payload.tokenId),
+          eq(schema.authTokens.hostId, payload.hostId),
+          eq(schema.authTokens.tokenHash, hashToken(token))
+        )
+      );
     return rows.length ? payload : null;
   } catch {
     return null;
@@ -74,7 +86,14 @@ export function verifyPlayerToken(token: string): PlayerJwtPayload | null {
 }
 
 export async function revokeHostToken(payload: HostJwtPayload) {
-  await query('DELETE FROM auth_tokens WHERE id = ? AND host_id = ?', [payload.tokenId, payload.hostId]);
+  await db
+    .delete(schema.authTokens)
+    .where(
+      and(
+        eq(schema.authTokens.id, payload.tokenId),
+        eq(schema.authTokens.hostId, payload.hostId)
+      )
+    );
 }
 
 export function cookieOptions(maxAgeSec = 7 * 24 * 60 * 60) {
