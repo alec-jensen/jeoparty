@@ -582,6 +582,7 @@ const initialPlayerId = payload?.playerId ?? '';
     let finalTimer  = null;
     let lastStateTime = 0;
     let pingSentAt  = 0;
+    let lastRttMs   = null; // most recent measured round-trip latency
     let activeClue  = null; // { category, value }
 
     let gameState = {
@@ -671,7 +672,10 @@ const initialPlayerId = payload?.playerId ?? '';
       btn.addEventListener('click', () => {
         if (!canBuzz || !ws) return;
         canBuzz = false;
-        ws.send(JSON.stringify({ type: 'BUZZ', clientTime: Date.now() + offset }));
+        // Server-side latency compensation: we just say "I buzzed", with no
+        // client timestamp. The server estimates press time from receive_time
+        // minus the per-socket one-way latency estimate.
+        ws.send(JSON.stringify({ type: 'BUZZ' }));
         btn.disabled = true;
       });
     }
@@ -889,8 +893,12 @@ const initialPlayerId = payload?.playerId ?? '';
     let ws;
     function sendPing() {
       if (!ws || ws.readyState !== 1) return;
-      pingSentAt = Date.now();
-      ws.send(JSON.stringify({ type: 'PING', clientTime: pingSentAt }));
+      pingSentAt = performance.now();
+      // Report our most recently measured RTT so the server can update its
+      // estimate of one-way latency for this socket.
+      const payload = { type: 'PING', clientTime: Date.now() };
+      if (lastRttMs != null) payload.rtt = lastRttMs;
+      ws.send(JSON.stringify(payload));
     }
 
     function connect() {
@@ -914,6 +922,10 @@ const initialPlayerId = payload?.playerId ?? '';
         const msg = JSON.parse(event.data);
 
         if (msg.type === 'PONG') {
+          // Measure RTT using our monotonic clock — never Date.now().
+          const rtt = performance.now() - pingSentAt;
+          if (Number.isFinite(rtt) && rtt >= 0 && rtt < 5000) lastRttMs = rtt;
+          // Keep clock offset around for any display-only purposes.
           if (msg.clientTime != null && typeof msg.clientTime === 'number') {
             offset = msg.serverTime - (msg.clientTime + Date.now()) / 2;
           } else {
@@ -1082,10 +1094,12 @@ const initialPlayerId = payload?.playerId ?? '';
       });
     }
 
+    // Frequent ping while connected so the server's min-RTT estimate converges
+    // quickly; slower fallback only used to re-establish a dropped connection.
     setInterval(() => {
       if (ws && ws.readyState === 1) sendPing();
       else if (playerToken && (!ws || ws.readyState === 3)) connect();
-    }, 10000);
+    }, 1500);
 
     function applySyncState(state) {
       if (state.serverTime && state.serverTime < lastStateTime) {

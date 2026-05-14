@@ -19,7 +19,6 @@ import {
 } from './gameState';
 import { verifyHostToken, verifyPlayerToken } from './auth';
 import { chooseWinner as selectWinner } from './buzzLogic';
-import { validateBuzzTime } from './timeSync';
 
 type SocketMeta = {
   socketId: string;
@@ -27,7 +26,20 @@ type SocketMeta = {
   role: 'host' | 'player' | 'presenter';
   hostId?: number;
   playerId?: string;
+  /**
+   * Best-known round-trip time for this socket (ms). The server keeps the
+   * MIN observed RTT — a client cannot help themselves by inflating RTT
+   * (would only widen their estimated press time, making them slower).
+   */
+  minRttMs?: number;
 };
+
+/** Fallback one-way latency assumption when no RTT has been observed yet. */
+const DEFAULT_ONE_WAY_MS = 60;
+/** Buzz collection window — short, just enough to absorb realistic jitter. */
+const BUZZ_WINDOW_MS = 250;
+/** Hard cap on accepted RTT measurements — anything higher is treated as jitter. */
+const MAX_PLAUSIBLE_RTT_MS = 2000;
 
 const sockets = (globalThis as any)._jeoparty_sockets || new Map<string, { ws: WebSocket; meta: SocketMeta }>();
 if (process.env.NODE_ENV !== 'production') {
@@ -324,6 +336,13 @@ export function initWebSockets(server: import('node:http').Server) {
       if (!current) return;
 
       if (data.type === 'PING') {
+        // Track the client's reported RTT (keep the minimum we've seen).
+        const reportedRtt = Number(data.rtt);
+        if (Number.isFinite(reportedRtt) && reportedRtt >= 0 && reportedRtt < MAX_PLAUSIBLE_RTT_MS) {
+          if (meta.minRttMs == null || reportedRtt < meta.minRttMs) {
+            meta.minRttMs = reportedRtt;
+          }
+        }
         const pong: Record<string, unknown> = { serverTime: Date.now() };
         if (data.clientTime != null && typeof data.clientTime === 'number') {
           pong.clientTime = data.clientTime;
@@ -552,13 +571,23 @@ export function initWebSockets(server: import('node:http').Server) {
         if (data.type === 'BUZZ') {
           const cq = current.currentQuestion;
           if (!cq || !cq.buzzerOpen || cq.eliminated.has(meta.playerId)) return;
-          const now = Date.now();
-          const t = Number(data.clientTime);
+          // Server-driven timing: the client says "I buzzed now" with NO
+          // timestamp. We derive the press time by subtracting our best
+          // estimate of one-way latency from the receive time.
+          const receiveTime = Date.now();
+          const oneWayMs = (meta.minRttMs != null ? meta.minRttMs / 2 : DEFAULT_ONE_WAY_MS);
           const open = cq.serverBuzzerOpenTime ?? 0;
-          if (!validateBuzzTime(t, open, now)) return;
+          // Clamp to "no earlier than buzzer open" — prevents both clock skew
+          // and the case where one-way RTT happens to be larger than the time
+          // since the buzzer actually opened.
+          const estimatedPress = Math.max(open, receiveTime - oneWayMs);
           if (cq.buzzOrder.some((b) => b.playerId === meta.playerId)) return;
-          if (cq.buzzOrder.length > 0 && cq.buzzCollectDeadline != null && now > cq.buzzCollectDeadline) return;
-          cq.buzzOrder.push({ playerId: meta.playerId, clientTime: t, receivedTime: now });
+          if (cq.buzzOrder.length > 0 && cq.buzzCollectDeadline != null && receiveTime > cq.buzzCollectDeadline) return;
+          cq.buzzOrder.push({
+            playerId: meta.playerId,
+            clientTime: estimatedPress,   // semantically: estimated press time
+            receivedTime: receiveTime,
+          });
 
           // Short-circuit: if every still-eligible player has buzzed, resolve now.
           const eligibleCount = Array.from(current.players.keys())
@@ -571,9 +600,8 @@ export function initWebSockets(server: import('node:http').Server) {
           // Otherwise on the first buzz, schedule a short jitter window for any
           // nearly-simultaneous buzzes that arrived a few ms later.
           if (cq.buzzOrder.length === 1) {
-            const WINDOW_MS = 600;
-            cq.buzzCollectDeadline = now + WINDOW_MS;
-            const timer = setTimeout(() => void resolveBuzzerWinner(gameId), WINDOW_MS);
+            cq.buzzCollectDeadline = receiveTime + BUZZ_WINDOW_MS;
+            const timer = setTimeout(() => void resolveBuzzerWinner(gameId), BUZZ_WINDOW_MS);
             trackTimer(gameId, timer);
           }
         }

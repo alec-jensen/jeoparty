@@ -1,14 +1,21 @@
 export interface BuzzEntry {
   playerId: string;
+  /**
+   * Estimated press time on a common clock. The server computes this as
+   * `receivedTime - estimatedOneWayLatency`, where one-way latency comes
+   * from the minimum RTT observed for the socket. Named `clientTime` for
+   * back-compat with the older protocol that trusted client timestamps.
+   */
   clientTime: number;
+  /** Server clock time when the BUZZ message was received. */
   receivedTime: number;
 }
 
 /**
  * Chooses the winner among players who buzzed in.
  * Selection criteria:
- * 1. Earliest clientTime (synchronized time)
- * 2. Earliest receivedTime (server arrival time) if clientTime is tied
+ * 1. Earliest estimated press time (clientTime field)
+ * 2. Earliest receivedTime if estimated press times are tied
  * 3. Random choice if both are tied
  */
 export function chooseWinner(
