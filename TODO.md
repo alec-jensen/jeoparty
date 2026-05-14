@@ -18,3 +18,8 @@
 - [ ] require unique player names when joining a game
 - [ ] figure out and standardize player avatars. likely just colored rounded squares with different shapes holes in the middle, giving a lot of unique combinations without needing to store custom images or anything. 
   - [ ] players can choose their avatar when they join a game, and they can change it in the lobby while waiting for the game to start. make sure they never get an avatar that's already taken by someone else in the same game
+
+- [ ] players should not be able to buzz twice for the same clue. if they get it wrong, they are locked out from buzzing again until the next clue.
+- [ ] the first player to join is the first to pick a clue. the board should not be shown to them until the intro is over
+
+- [ ] the "next" button for the host doesnt work (at least to go to final jeopardy). final jeopardy should not happen automatically, the host should have to click next. but next should also work.

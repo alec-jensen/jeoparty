@@ -18,6 +18,17 @@ export const POST: APIRoute = async ({ request, params, cookies }) => {
   const playerId = randomUUID();
   await db.insert(schema.players).values({ id: playerId, gameId, displayName: name });
 
+  // First player to join picks the first clue. Persist this to the DB so it
+  // survives even if no host/presenter has connected (and the in-memory game
+  // therefore doesn't exist yet).
+  const fresh = await db.select({ currentPickerId: schema.games.currentPickerId })
+    .from(schema.games).where(eq(schema.games.id, gameId));
+  if (fresh.length && !fresh[0].currentPickerId) {
+    await db.update(schema.games)
+      .set({ currentPickerId: playerId })
+      .where(eq(schema.games.id, gameId));
+  }
+
   // Update in-memory state if the game is active
   const { addPlayerToGame } = await import('@/lib/gameState');
   console.log(`[API/Join] Updating in-memory state for game ${gameId}, player ${name}`);

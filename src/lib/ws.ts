@@ -354,10 +354,31 @@ export function initWebSockets(server: import('node:http').Server) {
       // ── HOST MESSAGES ───────────────────────────────────────────────────────
       if (meta.role === 'host') {
         if (data.type === 'GAME_START') {
+          // Safety net: if no picker is set yet (e.g., joins happened before
+          // we added the first-joiner rule), fall back to the first player.
+          if (!current.currentPicker) {
+            const first = current.players.keys().next().value ?? null;
+            if (first) {
+              current.currentPicker = first;
+              await db.update(schema.games)
+                .set({ currentPickerId: first })
+                .where(eq(schema.games.id, gameId));
+            }
+          }
           await setGameStatus(gameId, 'active');
           current.status = 'active';
-          broadcast(current, 'GAME_START');
+          // Intro lockout: 23s "this is jeopardy" audio + ~3s board fill.
+          // Player who picks first can't select a clue until this elapses.
+          const INTRO_MS = 26000;
+          current.boardReadyAt = Date.now() + INTRO_MS;
+          broadcast(current, 'GAME_START', { boardReadyAt: current.boardReadyAt });
           broadcast(current, 'BOARD_STATE', boardState(current));
+          const timer = setTimeout(() => {
+            const g = (globalThis as any)._jeoparty_games?.get(gameId) ?? current;
+            if (g) g.boardReadyAt = null;
+            broadcast(current, 'BOARD_READY');
+          }, INTRO_MS);
+          trackTimer(gameId, timer);
         }
 
         if (data.type === 'SKIP_QUESTION') {
@@ -407,6 +428,12 @@ export function initWebSockets(server: import('node:http').Server) {
           const playerId = data.playerId as string;
           current.players.delete(playerId);
           await db.delete(schema.players).where(eq(schema.players.id, playerId));
+          // If the picker just left, hand the pick to the next remaining player
+          if (current.currentPicker === playerId) {
+            const next = current.players.keys().next().value ?? null;
+            current.currentPicker = next;
+            await db.update(schema.games).set({ currentPickerId: next }).where(eq(schema.games.id, gameId));
+          }
           broadcast(current, 'PLAYER_KICKED', { playerId });
         }
 
@@ -544,6 +571,8 @@ export function initWebSockets(server: import('node:http').Server) {
       if (meta.role === 'player' && meta.playerId) {
         if (data.type === 'SELECT_QUESTION') {
           if (current.currentPicker !== meta.playerId || current.status !== 'active' || current.currentQuestion) return;
+          // Reject if the intro+board-fill animation hasn't finished yet.
+          if (current.boardReadyAt && Date.now() < current.boardReadyAt) return;
           const questionId = Number(data.questionId);
           if (current.usedQuestions.has(questionId)) return;
           const found = findQuestion(current, questionId);

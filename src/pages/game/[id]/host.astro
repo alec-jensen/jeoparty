@@ -388,6 +388,9 @@ const seed = {
       if (msg.type === 'PONG') return;
       if (msg.type === 'SYNC_STATE' || msg.type === 'BOARD_STATE') {
         applySyncState(msg);
+      } else if (msg.type === 'SCORE_UPDATE') {
+        (msg.scores || []).forEach((s) => players.set(s.playerId, s));
+        renderPlayerList();
       } else if (msg.type === 'BUZZ_WINNER') {
         renderJudging(msg);
       } else if (msg.type === 'QUESTION_CLOSED') {

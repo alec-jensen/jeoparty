@@ -47,6 +47,11 @@ export interface ActiveGame {
   status: 'lobby' | 'active' | 'final_jeopardy' | 'finished';
   /** epoch ms of the last socket activity for this game; used for idle TTL eviction */
   lastActivity: number;
+  /**
+   * Epoch ms when the post-GAME_START intro+board-fill animation completes.
+   * Null when not during the intro. Players can't pick clues until this passes.
+   */
+  boardReadyAt: number | null;
   players: Map<string, { displayName: string; score: number; socketId: string; teamId: number | null }>;
   teams: Map<number, TeamData>;
   teamMode: boolean;
@@ -185,6 +190,7 @@ export async function getOrCreateGame(gameId: string): Promise<ActiveGame | null
       hostSocketId: '',
       status: game.status as ActiveGame['status'],
       lastActivity: Date.now(),
+      boardReadyAt: null,
       players: playersMap,
       teams: teamsMap,
       teamMode: !!game.teamMode,
@@ -286,6 +292,14 @@ export async function addPlayerToGame(gameId: string, player: { id: string, disp
   if (player.teamId != null) {
     const t = g.teams.get(player.teamId);
     if (t && !t.playerIds.includes(player.id)) t.playerIds.push(player.id);
+  }
+  // First player to join gets the first pick (real Jeopardy starts with the
+  // returning champion; here, first joiner stands in for that).
+  if (!g.currentPicker) {
+    g.currentPicker = player.id;
+    await db.update(schema.games)
+      .set({ currentPickerId: player.id })
+      .where(eq(schema.games.id, gameId));
   }
 }
 
@@ -417,6 +431,7 @@ export function boardState(game: ActiveGame) {
     currentPicker: game.currentPicker,
     totalRounds: game.board.rounds.length,
     teamMode: game.teamMode,
+    boardReadyAt: game.boardReadyAt,
     serverTime: Date.now(),
     status: game.status,
     activeQuestion,

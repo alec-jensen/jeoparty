@@ -584,6 +584,8 @@ const initialPlayerId = payload?.playerId ?? '';
     let pingSentAt  = 0;
     let lastRttMs   = null; // most recent measured round-trip latency
     let activeClue  = null; // { category, value }
+    let boardReady  = true; // false during the GAME_START intro animation
+    let boardReadyTimer = null;
 
     let gameState = {
       board: null,
@@ -761,6 +763,33 @@ const initialPlayerId = payload?.playerId ?? '';
         });
       });
       setFooter(`Connected · room ${gameId}`, { color: 'var(--mint)' });
+    }
+
+    function renderIntroWaiting() {
+      hideClue();
+      setPhase('lobby');
+      phaseRoot.innerHTML = `
+        <div class="lobby-area">
+          <div class="lobby-eyebrow">GAME STARTING</div>
+          <div class="lobby-title">WATCH THE SCREEN</div>
+          <div class="lobby-sub">Get ready — clues unlock when the intro finishes.</div>
+        </div>
+      `;
+      setFooter('Intro playing…', { color: 'var(--gold)', pulse: true });
+    }
+
+    function armBoardReadyTimer(readyAt) {
+      boardReady = false;
+      if (boardReadyTimer) { clearTimeout(boardReadyTimer); boardReadyTimer = null; }
+      const ms = Math.max(0, readyAt - Date.now());
+      boardReadyTimer = setTimeout(() => {
+        boardReady = true;
+        boardReadyTimer = null;
+        isMyTurn = !!(playerId && gameState.currentPicker === playerId);
+        if (gameState.status === 'active') {
+          if (isMyTurn) renderBoardPicker(); else renderWaitingForPicker();
+        }
+      }, ms);
     }
 
     function renderWaitingForPicker() {
@@ -941,7 +970,24 @@ const initialPlayerId = payload?.playerId ?? '';
           return;
         }
 
+        if (msg.type === 'SCORE_UPDATE') {
+          if (Array.isArray(msg.scores)) gameState.scores = msg.scores;
+          if (Array.isArray(msg.teams)) gameState.teams = msg.teams;
+          updateHeader();
+          return;
+        }
+
         if (msg.type === 'GAME_START') {
+          isMyTurn = !!(playerId && gameState.currentPicker === playerId);
+          // Hold off the picker UI until the intro animation finishes.
+          const readyAt = Number(msg.boardReadyAt) || (Date.now() + 26000);
+          armBoardReadyTimer(readyAt);
+          renderIntroWaiting();
+        }
+
+        if (msg.type === 'BOARD_READY') {
+          boardReady = true;
+          if (boardReadyTimer) { clearTimeout(boardReadyTimer); boardReadyTimer = null; }
           isMyTurn = !!(playerId && gameState.currentPicker === playerId);
           if (isMyTurn) renderBoardPicker(); else renderWaitingForPicker();
         }
@@ -1118,6 +1164,15 @@ const initialPlayerId = payload?.playerId ?? '';
       gameState.status = state.status || 'lobby';
       isMyTurn = !!(playerId && gameState.currentPicker === playerId);
 
+      // Respect server-reported intro lockout. If the page was reloaded mid-intro,
+      // re-arm the local timer for the remaining time.
+      const readyAt = Number(state.boardReadyAt) || 0;
+      if (readyAt && readyAt > Date.now()) {
+        armBoardReadyTimer(readyAt);
+      } else {
+        boardReady = true;
+      }
+
       updateHeader();
 
       // Don't blow away an active mid-question UI on every sync; only re-render passive states.
@@ -1126,7 +1181,8 @@ const initialPlayerId = payload?.playerId ?? '';
 
       if (gameState.status === 'lobby') renderLobby();
       else if (gameState.status === 'active') {
-        if (isMyTurn) renderBoardPicker();
+        if (!boardReady) renderIntroWaiting();
+        else if (isMyTurn) renderBoardPicker();
         else renderWaitingForPicker();
       } else if (gameState.status === 'final_jeopardy') {
         // Server will drive the wager/answer phase via explicit messages
