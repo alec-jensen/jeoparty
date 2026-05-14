@@ -18,6 +18,10 @@ export const boards = mysqlTable('boards', {
   id: int('id').autoincrement().primaryKey(),
   hostId: int('host_id').notNull().references(() => hosts.id),
   title: varchar('title', { length: 255 }).notNull(),
+  // Final Jeopardy clue (required to publish; one per board)
+  finalCategory: varchar('final_category', { length: 255 }),
+  finalQuestion: text('final_question'),
+  finalAnswer: text('final_answer'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow().onUpdateNow(),
 });

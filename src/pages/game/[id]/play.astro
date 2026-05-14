@@ -20,203 +20,873 @@ const initialPlayerId = payload?.playerId ?? '';
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Jeoparty — Play</title>
-  <style>
-    html, body { height: 100%; overflow: hidden; background: var(--bg); margin: 0; }
-    #scale-root { transform-origin: top left; }
-    .state-section { display: flex; flex-direction: column; gap: .75rem; padding: 1rem; }
+  <style is:global>
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+    }
+    .phone {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 52px 24px 28px;
+      background: var(--bg);
+    }
+    .phone[data-phase="buzzer"]   { background: radial-gradient(ellipse at 50% 100%, #2C0E1F 0%, var(--bg) 60%); }
+    .phone[data-phase="buzzed"]   { background: radial-gradient(ellipse at 50% 50%, rgba(255,61,142,0.25) 0%, var(--bg) 65%); }
+    .phone[data-phase="lockedout"]{ background: radial-gradient(ellipse at 50% 50%, rgba(124,92,255,0.18) 0%, var(--bg) 65%); }
+    .phone[data-phase="correct"]  { background: radial-gradient(ellipse at 50% 50%, rgba(94,235,193,0.22) 0%, var(--bg) 65%); }
+    .phone[data-phase="wrong"]    { background: radial-gradient(ellipse at 50% 50%, rgba(255,90,90,0.22) 0%, var(--bg) 65%); }
+    .phone[data-phase="join"],
+    .phone[data-phase="lobby"]    { background: radial-gradient(ellipse at 50% 0%, var(--bg3) 0%, var(--bg) 70%); }
+
+    /* ── Player header ────────────────────────────────────────────────── */
+    .p-header { display: flex; align-items: center; justify-content: space-between; }
+    .p-id { display: flex; align-items: center; gap: 10px; }
+    .avatar-tile {
+      width: 44px; height: 44px; border-radius: 10px;
+      background: var(--magenta);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; color: #0E0B22; font-weight: 800;
+      flex-shrink: 0; cursor: pointer;
+      font-family: 'Anton', sans-serif;
+      transition: transform 0.12s ease;
+    }
+    .avatar-tile:active { transform: scale(0.92); }
+    .p-name {
+      font-family: 'Anton', sans-serif;
+      font-size: 18px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+    .p-rank {
+      font-size: 10px;
+      color: var(--dim);
+      letter-spacing: 0.18em;
+      margin-top: 4px;
+    }
+    .p-score-block { text-align: right; }
+    .p-score-label {
+      font-size: 10px; color: var(--dim);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    .p-score-value {
+      font-family: 'Anton', sans-serif;
+      font-size: 28px;
+      color: var(--gold);
+      line-height: 1;
+    }
+    .p-score-value.negative { color: var(--red); }
+
+    /* ── Clue context card ─────────────────────────────────────────── */
+    .clue-bar {
+      margin-top: 28px;
+      padding: 12px 16px;
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .clue-cat {
+      font-family: 'Anton', sans-serif;
+      font-size: 14px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .clue-val {
+      font-family: 'Anton', sans-serif;
+      font-size: 18px;
+      color: var(--gold);
+    }
+
+    /* ── Centered status message ──────────────────────────────────── */
+    .phase-status {
+      text-align: center;
+      margin-top: 36px;
+    }
+    .phase-eyebrow {
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+    }
+    .phase-headline {
+      margin-top: 8px;
+      font-family: 'Anton', sans-serif;
+      font-size: 22px;
+      color: var(--ink);
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Big buzzer ──────────────────────────────────────────────── */
+    .buzz-area {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+      min-height: 280px;
+    }
+    .buzz-ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 2px solid var(--magenta);
+      pointer-events: none;
+    }
+    .buzz-ring.r1 { width: 240px; height: 240px; opacity: 0.18; animation: jp-ring 2.4s ease-out 0s infinite; }
+    .buzz-ring.r2 { width: 290px; height: 290px; opacity: 0.13; animation: jp-ring 2.4s ease-out 0.4s infinite; }
+    .buzz-ring.r3 { width: 340px; height: 340px; opacity: 0.08; animation: jp-ring 2.4s ease-out 0.8s infinite; }
+    .buzz-btn {
+      width: 240px; height: 240px; border-radius: 50%;
+      border: none; cursor: pointer;
+      background: radial-gradient(circle at 35% 30%, #ff80b3 0%, #FF3D8E 45%, #B22A63 100%);
+      box-shadow:
+        0 18px 0 #6B1A3B,
+        0 30px 80px rgba(255,61,142,0.45),
+        inset 0 -8px 24px rgba(0,0,0,0.25),
+        inset 0 8px 24px rgba(255,255,255,0.2);
+      font-family: 'Anton', sans-serif;
+      font-size: 56px;
+      color: #0E0B22;
+      letter-spacing: 0.08em;
+      text-shadow: 0 2px 0 rgba(255,255,255,0.15);
+      transition: transform 0.06s ease, box-shadow 0.06s ease;
+      position: relative;
+      z-index: 1;
+    }
+    .buzz-btn:active {
+      transform: translateY(10px);
+      box-shadow:
+        0 8px 0 #6B1A3B,
+        0 14px 40px rgba(255,61,142,0.4),
+        inset 0 -8px 24px rgba(0,0,0,0.25),
+        inset 0 8px 24px rgba(255,255,255,0.2);
+    }
+    .buzz-btn:disabled {
+      cursor: not-allowed;
+      background: radial-gradient(circle at 35% 30%, #4a3550 0%, #2e1f3a 45%, #1a1228 100%);
+      box-shadow:
+        0 18px 0 #0a0418,
+        0 30px 60px rgba(0,0,0,0.4),
+        inset 0 -8px 24px rgba(0,0,0,0.4),
+        inset 0 8px 24px rgba(255,255,255,0.05);
+      color: var(--dim2);
+      text-shadow: none;
+    }
+    .buzz-btn:disabled ~ .buzz-ring { display: none; }
+
+    /* ── You're up ────────────────────────────────────────────────── */
+    .youre-up-area {
+      flex: 1;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 24px;
+    }
+    .youre-up-headline {
+      font-family: 'Anton', sans-serif;
+      font-size: 116px;
+      color: var(--gold);
+      letter-spacing: 0.06em;
+      text-shadow: 0 0 40px rgba(255,200,61,0.33);
+      transform: rotate(-2deg);
+      line-height: 0.9;
+      text-align: center;
+    }
+    .youre-up-sub {
+      font-family: 'Anton', sans-serif;
+      font-size: 22px;
+      color: var(--ink);
+      letter-spacing: 0.02em;
+      text-align: center;
+      max-width: 280px;
+      text-wrap: balance;
+      line-height: 1.2;
+    }
+
+    /* ── Locked out / correct / wrong (similar big-text states) ──── */
+    .big-text-area {
+      flex: 1;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 18px;
+      text-align: center;
+    }
+    .big-text-eyebrow {
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+    }
+    .big-text-headline {
+      font-family: 'Anton', sans-serif;
+      font-size: 80px;
+      letter-spacing: 0.04em;
+      line-height: 0.95;
+      transform: rotate(-2deg);
+    }
+    .big-text-headline.locked  { color: var(--violet); text-shadow: 0 0 40px rgba(124,92,255,0.4); }
+    .big-text-headline.correct { color: var(--mint);   text-shadow: 0 0 40px rgba(94,235,193,0.45); }
+    .big-text-headline.wrong   { color: var(--red);    text-shadow: 0 0 40px rgba(255,90,90,0.4); }
+    .big-text-sub {
+      font-family: 'Anton', sans-serif;
+      font-size: 20px;
+      color: var(--ink);
+      letter-spacing: 0.02em;
+      text-align: center;
+      max-width: 300px;
+      line-height: 1.2;
+    }
+
+    /* ── Lobby / waiting ──────────────────────────────────────────── */
+    .lobby-area {
+      flex: 1;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 18px; text-align: center;
+    }
+    .lobby-eyebrow {
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+    }
+    .lobby-title {
+      font-family: 'Anton', sans-serif;
+      font-size: 60px;
+      color: var(--gold);
+      letter-spacing: 0.04em;
+      line-height: 0.95;
+      text-shadow: 0 0 40px rgba(255,200,61,0.25);
+    }
+    .lobby-sub {
+      font-family: 'Anton', sans-serif;
+      font-size: 20px;
+      color: var(--ink);
+      letter-spacing: 0.02em;
+      max-width: 280px;
+      line-height: 1.2;
+    }
+
+    /* ── Footer (connected status / judging) ─────────────────────── */
+    .p-footer {
+      display: flex; gap: 8px;
+      background: var(--bg2);
+      border-radius: 12px;
+      padding: 12px 14px;
+      align-items: center;
+      margin-top: 12px;
+    }
+    .p-footer .dot {
+      width: 8px; height: 8px; border-radius: 999px;
+      background: var(--mint);
+      flex-shrink: 0;
+    }
+    .p-footer .dot.pulse { animation: jp-pulse 1.2s ease-in-out infinite; }
+    .p-footer .ftext { font-size: 12px; color: var(--ink); letter-spacing: 0.06em; flex: 1; }
+    .p-footer .room { font-size: 10px; color: var(--dim); letter-spacing: 0.18em; }
+
+    /* ── Board picker ─────────────────────────────────────────────── */
+    .picker-wrap { margin-top: 24px; flex: 1; overflow-y: auto; }
+    .picker-grid { display: grid; gap: 6px; }
+    .picker-cat {
+      background: linear-gradient(180deg, var(--violet) 0%, #5A3FE0 100%);
+      border-radius: 8px;
+      padding: 8px 6px;
+      text-align: center;
+      font-family: 'Anton', sans-serif;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #fff;
+      line-height: 1.05;
+      white-space: pre-line;
+    }
+    .picker-cell {
+      min-height: 56px;
+      font-family: 'Anton', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--gold);
+      background: linear-gradient(160deg, var(--bg4) 0%, #0a0630 100%);
+      border: 1px solid rgba(124, 92, 255, 0.3);
+      border-radius: 8px;
+      cursor: pointer;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    .picker-cell:disabled { opacity: 0.2; cursor: default; }
+    .picker-cell:not(:disabled):active { transform: scale(0.97); }
+
+    /* ── Inline input area (wagers, answers) ─────────────────────── */
+    .input-area {
+      margin-top: 18px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .input-area input {
+      background: var(--bg2);
+      border: 2px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-family: 'Anton', sans-serif;
+      font-size: 22px;
+      color: var(--ink);
+      letter-spacing: 0.04em;
+      outline: none;
+      width: 100%;
+    }
+    .input-area input:focus { border-color: var(--gold); }
+    .input-area button {
+      background: var(--gold);
+      color: #0E0B22;
+      font-family: 'Anton', sans-serif;
+      font-size: 22px;
+      letter-spacing: 0.08em;
+      padding: 16px 0;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 10px 0 #B88A1F, 0 16px 32px rgba(255,200,61,0.25);
+    }
+    .input-area button:active { transform: translateY(4px); box-shadow: 0 6px 0 #B88A1F, 0 10px 18px rgba(255,200,61,0.22); }
+    .input-area .small { font-size: 12px; color: var(--dim); letter-spacing: 0.04em; }
+
+    /* ── Countdown ────────────────────────────────────────────────── */
+    .countdown {
+      text-align: center;
+      font-family: 'Anton', sans-serif;
+      font-size: 40px;
+      color: var(--gold);
+      margin-top: 14px;
+    }
+    .countdown.urgent { color: var(--red); animation: jp-pulse 0.5s infinite; }
+
+    /* ── Scores list ──────────────────────────────────────────────── */
+    .scores {
+      margin-top: 18px;
+      list-style: none;
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 0;
+    }
+    .scores li {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      font-family: 'Anton', sans-serif;
+      font-size: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .scores li strong { color: var(--gold); }
+
+    /* ── Join (inside game) ──────────────────────────────────────── */
+    .join-shell-inner {
+      flex: 1; display: flex; flex-direction: column;
+    }
+    .join-title {
+      font-family: 'Anton', sans-serif;
+      font-size: 56px; color: var(--gold);
+      letter-spacing: 0.02em; line-height: 1; text-align: center;
+    }
+    .join-tagline {
+      font-size: 12px; color: var(--dim);
+      letter-spacing: 0.22em; text-align: center; margin-top: 6px;
+    }
+    .field-label {
+      font-size: 11px; color: var(--dim);
+      letter-spacing: 0.25em; font-weight: 600; text-transform: uppercase;
+    }
+    .code-row { display: flex; gap: 10px; margin-top: 12px; }
+    .code-box {
+      flex: 1; aspect-ratio: 0.85;
+      background: var(--bg2);
+      border: 2px solid var(--gold);
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Anton', sans-serif; font-size: 48px;
+      color: var(--ink);
+    }
+    .name-field {
+      margin-top: 12px;
+      background: var(--bg2); border: 2px solid var(--line);
+      border-radius: 14px; padding: 18px 20px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .name-field:focus-within { border-color: var(--gold); }
+    .name-input {
+      font-family: 'Anton', sans-serif;
+      font-size: 26px; letter-spacing: 0.04em;
+      color: var(--ink); flex: 1;
+      background: transparent; border: none; outline: none; padding: 0;
+      text-transform: uppercase;
+    }
+    .name-input::placeholder { color: var(--dim2); }
+    .name-hint {
+      font-size: 11px; color: var(--dim);
+      margin-top: 8px; letter-spacing: 0.04em;
+    }
+    .join-btn {
+      background: var(--gold); color: #0E0B22;
+      font-family: 'Anton', sans-serif; font-size: 26px;
+      letter-spacing: 0.08em; padding: 20px 0;
+      border-radius: 999px; border: none; cursor: pointer; width: 100%;
+      box-shadow: 0 14px 0 #B88A1F, 0 22px 40px rgba(255,200,61,0.3);
+    }
+    .join-btn:active { transform: translateY(6px); box-shadow: 0 8px 0 #B88A1F, 0 12px 24px rgba(255,200,61,0.25); }
+    .err-msg {
+      text-align: center; min-height: 1.2em;
+      font-size: 13px; color: var(--red);
+      margin-top: 8px; letter-spacing: 0.02em;
+    }
+    .grow { flex: 1; min-height: 24px; }
+
+    .hidden { display: none !important; }
+    @keyframes jp-ring {
+      0%   { transform: scale(0.7); opacity: 0.3; }
+      80%  { opacity: 0; }
+      100% { transform: scale(1.15); opacity: 0; }
+    }
+    @keyframes jp-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.4; transform: scale(0.7); }
+    }
   </style>
 </head>
 <body>
-  <div id="scale-root" class="phone-root">
+  <div class="phone" id="phone" data-phase={isJoined ? 'lobby' : 'join'}>
 
-    <!-- Join form (shown if not yet joined) -->
-    <div id="joinCard" class={`state-section ${isJoined ? 'hidden' : ''}`} style="min-height:100vh; justify-content:center; align-items:center;">
-      <div style="text-align:center; font-family:'Anton',sans-serif; font-size:2.5rem; font-weight:700; color:var(--accent);">JEOPARTY</div>
-      <div class="card grid" style="width:100%;">
-        <h2 style="text-align:center;">Join Game</h2>
-        <div class="join-code" style="text-align:center; font-size:3rem;">{gameId}</div>
-        <input id="displayName" maxlength="64" placeholder="Your nickname" style="font-size:1.1rem;" autocomplete="nickname" />
-        <button id="joinBtn" class="accent" style="font-size:1.15rem;">Join!</button>
-        <p id="joinMsg" class="small" style="text-align:center; min-height:1em;"></p>
+    <!-- ── JOIN ────────────────────────────────────────────────── -->
+    <div id="joinView" class={`join-shell-inner ${isJoined ? 'hidden' : ''}`}>
+      <div class="join-title">JEOPARTY</div>
+      <div class="join-tagline">PARTY · TRIVIA · CHAOS</div>
+
+      <div style="margin-top: 48px;">
+        <div class="field-label">ROOM CODE</div>
+        <div class="code-row">
+          {gameId.padEnd(4).split('').slice(0, 4).map((c) => (
+            <div class="code-box">{c.trim() || ''}</div>
+          ))}
+        </div>
       </div>
+
+      <div style="margin-top: 28px;">
+        <div class="field-label">YOUR NAME</div>
+        <div class="name-field">
+          <span id="joinAvatar" class="avatar-tile" title="Tap to change color">✦</span>
+          <input id="displayName" class="name-input" maxlength="24" placeholder="YOUR NAME" autocomplete="nickname" />
+        </div>
+        <div class="name-hint">Tap your avatar to change color.</div>
+      </div>
+
+      <p id="joinMsg" class="err-msg"></p>
+
+      <div class="grow"></div>
+
+      <button id="joinBtn" class="join-btn">JOIN GAME →</button>
     </div>
 
-    <!-- Game app (shown after joining) -->
-    <div id="app" class={isJoined ? '' : 'hidden'}>
-
-      <!-- State card -->
-      <div class="state-section">
-        <div class="card grid">
-          <div class="flex-between">
-            <h2 id="stateTitle" style="font-size:1.6rem;">Lobby</h2>
-            <span id="myScore" style="font-family:'Anton',sans-serif; font-size:1.4rem; color:var(--accent);"></span>
+    <!-- ── GAME UI ─────────────────────────────────────────────── -->
+    <div id="gameView" class={isJoined ? '' : 'hidden'} style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+      <header class="p-header">
+        <div class="p-id">
+          <span id="hdrAvatar" class="avatar-tile">✦</span>
+          <div>
+            <div id="hdrName" class="p-name">YOU</div>
+            <div id="hdrRank" class="p-rank">RANK —</div>
           </div>
-          <p id="stateText" class="muted">Waiting for the host to start...</p>
-
-          <!-- Countdown -->
-          <div id="countdown" class="countdown hidden"></div>
-
-          <!-- Buzz button -->
-          <button id="buzzBtn" class="buzzer-btn hidden">BUZZ!</button>
-
-          <!-- Input area (wager / answer) -->
-          <div id="inputArea" class="grid hidden"></div>
         </div>
-
-        <!-- Board (shown when it's your turn to pick) -->
-        <div id="boardWrap" class="card hidden">
-          <h3 style="margin-bottom:.5rem;">Pick a Question</h3>
-          <div id="playerBoard" class="board-grid"></div>
+        <div class="p-score-block">
+          <div id="hdrScoreLabel" class="p-score-label">YOUR SCORE</div>
+          <div id="hdrScore" class="p-score-value">$0</div>
         </div>
+      </header>
 
-        <!-- Scores card -->
-        <div class="card">
-          <h3 style="margin-bottom:.5rem;">Scores</h3>
-          <ul id="scoresList" class="scores"></ul>
-        </div>
+      <!-- Clue context (shown when a question is active) -->
+      <div id="clueBar" class="clue-bar hidden">
+        <span id="clueCat" class="clue-cat">CATEGORY</span>
+        <span id="clueVal" class="clue-val">$0</span>
       </div>
+
+      <!-- Dynamic phase area -->
+      <div id="phaseRoot" style="display: flex; flex-direction: column; flex: 1; min-height: 0;"></div>
+
+      <footer class="p-footer">
+        <span id="ftrDot" class="dot"></span>
+        <span id="ftrText" class="ftext">Connecting…</span>
+        <span class="room">{gameId}</span>
+      </footer>
     </div>
   </div>
 
   <script is:inline define:vars={{ gameId, token: token, initialPlayerId, isJoined }}>
     // @ts-nocheck
-    /* ── Scaling ───────────────────────────────────────────────────────────── */
-    function scale() {
-      const root = document.getElementById('scale-root');
-      const tw = 390; const th = 844;
-      const s = Math.min(window.innerWidth / tw, window.innerHeight / th);
-      root.style.width = tw + 'px';
-      root.style.height = th + 'px';
-      root.style.transform = `scale(${s}) translate(-50%, -50%)`;
-      root.style.left = '50%';
-      root.style.top = '50%';
-      root.style.position = 'absolute';
-      root.style.transformOrigin = 'top left';
+
+    const AVATAR_COLORS = [
+      { name: 'magenta', value: '#FF3D8E', glyph: '✦' },
+      { name: 'gold',    value: '#FFC83D', glyph: '◆' },
+      { name: 'mint',    value: '#5EEBC1', glyph: '●' },
+      { name: 'violet',  value: '#7C5CFF', glyph: '▲' },
+      { name: 'orange',  value: '#FF8A3D', glyph: '◐' },
+      { name: 'blue',    value: '#5BA9FF', glyph: '■' },
+    ];
+    let avatarIdx = 0;
+    try {
+      const saved = localStorage.getItem('jp.avatar');
+      if (saved != null) avatarIdx = Math.max(0, Math.min(AVATAR_COLORS.length - 1, parseInt(saved, 10) || 0));
+    } catch {}
+
+    function applyAvatar(el) {
+      const c = AVATAR_COLORS[avatarIdx];
+      el.style.background = c.value;
+      el.textContent = c.glyph;
     }
-    scale();
-    window.addEventListener('resize', scale);
+    function cycleAvatar(el) {
+      avatarIdx = (avatarIdx + 1) % AVATAR_COLORS.length;
+      applyAvatar(el);
+      try { localStorage.setItem('jp.avatar', String(avatarIdx)); } catch {}
+      // Sync any other avatar tiles on screen
+      document.querySelectorAll('.avatar-tile').forEach((t) => { if (t !== el) applyAvatar(t); });
+    }
 
-    /* ── State ─────────────────────────────────────────────────────────────── */
-    let playerId   = initialPlayerId;
+    const joinAvatar = document.getElementById('joinAvatar');
+    const hdrAvatar = document.getElementById('hdrAvatar');
+    if (joinAvatar) { applyAvatar(joinAvatar); joinAvatar.addEventListener('click', () => cycleAvatar(joinAvatar)); }
+    if (hdrAvatar)  { applyAvatar(hdrAvatar);  hdrAvatar .addEventListener('click', () => cycleAvatar(hdrAvatar));  }
+
+    /* ── State ─────────────────────────────────────────────────── */
+    const phone       = document.getElementById('phone');
+    const joinView    = document.getElementById('joinView');
+    const gameView    = document.getElementById('gameView');
+    const hdrName     = document.getElementById('hdrName');
+    const hdrRank     = document.getElementById('hdrRank');
+    const hdrScore    = document.getElementById('hdrScore');
+    const hdrScoreLabel = document.getElementById('hdrScoreLabel');
+    const clueBar     = document.getElementById('clueBar');
+    const clueCat     = document.getElementById('clueCat');
+    const clueVal     = document.getElementById('clueVal');
+    const phaseRoot   = document.getElementById('phaseRoot');
+    const ftrDot      = document.getElementById('ftrDot');
+    const ftrText     = document.getElementById('ftrText');
+
+    let playerId    = initialPlayerId;
     let playerToken = token;
-    let offset     = 0;
-    let canBuzz    = false;
-    let isMyTurn   = false;
-    let finalTimer = null;
-    let gameState  = { board: null, usedQuestions: new Set(), scores: [], teams: [], currentPicker: null, teamMode: false };
+    let offset      = 0;
+    let canBuzz     = false;
+    let isMyTurn    = false;
+    let finalTimer  = null;
+    let lastStateTime = 0;
+    let pingSentAt  = 0;
+    let activeClue  = null; // { category, value }
 
-    const stateTitle  = document.getElementById('stateTitle');
-    const stateText   = document.getElementById('stateText');
-    const myScore     = document.getElementById('myScore');
-    const scoresList  = document.getElementById('scoresList');
-    const boardWrap   = document.getElementById('boardWrap');
-    const playerBoard = document.getElementById('playerBoard');
-    const buzzBtn     = document.getElementById('buzzBtn');
-    const countdown   = document.getElementById('countdown');
-    const inputArea   = document.getElementById('inputArea');
-
-    /* ── Sound stubs ───────────────────────────────────────────────────────── */
-    const sounds = {
-      buzzerOpen()     { /* TODO: play buzzer-open.mp3 */ },
-      buzzIn()         { /* TODO: play buzz-in.mp3 */ },
-      correct()        { /* TODO: play correct.mp3 */ },
-      wrong()          { /* TODO: play wrong.mp3 */ },
-      dailyDouble()    { /* TODO: play daily-double.mp3 */ },
-      finalTheme()     { /* TODO: play final-jeopardy-theme.mp3 */ },
-      gameOver()       { /* TODO: play game-over.mp3 */ },
+    let gameState = {
+      board: null,
+      usedQuestions: new Set(),
+      scores: [],
+      teams: [],
+      currentPicker: null,
+      teamMode: false,
+      status: 'lobby',
     };
 
-    /* ── Helpers ───────────────────────────────────────────────────────────── */
-    function setState(title, text = '') {
-      stateTitle.textContent = title;
-      stateText.textContent = text;
+    function dollars(n) {
+      const abs = Math.abs(n).toLocaleString();
+      return n < 0 ? `-$${abs}` : `$${abs}`;
     }
 
-    function updateMyScore() {
-      const me = gameState.scores.find((s) => s.playerId === playerId);
-      if (me) myScore.textContent = '$' + me.score;
+    function myScoreEntry() {
+      return gameState.scores.find((s) => s.playerId === playerId);
     }
 
-    function renderScores() {
-      scoresList.innerHTML = '';
-      const items = gameState.teamMode && gameState.teams.length
-        ? gameState.teams.map((t) => ({ name: t.name, score: t.score })).sort((a, b) => b.score - a.score)
-        : [...gameState.scores].sort((a, b) => b.score - a.score).map((s) => ({ name: s.displayName, score: s.score }));
-      for (const item of items) {
-        const li = document.createElement('li');
-        li.innerHTML = `<span>${item.name}</span><strong>$${item.score}</strong>`;
-        scoresList.appendChild(li);
+    function updateHeader() {
+      const me = myScoreEntry();
+      if (me) {
+        hdrName.textContent = (me.displayName || 'YOU').toUpperCase();
+        const score = me.score || 0;
+        hdrScore.textContent = dollars(score);
+        hdrScore.classList.toggle('negative', score < 0);
+        // Rank
+        const sorted = [...gameState.scores].sort((a, b) => b.score - a.score);
+        const myRank = sorted.findIndex((s) => s.playerId === playerId) + 1;
+        if (myRank > 0) hdrRank.textContent = `RANK ${myRank} / ${gameState.scores.length}`;
+        else hdrRank.textContent = '';
       }
-      updateMyScore();
     }
 
-    function renderBoard() {
-      boardWrap.classList.add('hidden');
-      if (!isMyTurn || !gameState.board) return;
+    function setFooter(text, opts = {}) {
+      ftrText.textContent = text;
+      ftrDot.style.background = opts.color || 'var(--mint)';
+      ftrDot.classList.toggle('pulse', !!opts.pulse);
+    }
+
+    function setPhase(name) {
+      phone.dataset.phase = name;
+    }
+
+    function showClue(category, value) {
+      activeClue = { category, value };
+      clueCat.textContent = (category || '').toUpperCase();
+      clueVal.textContent = dollars(value || 0);
+      clueBar.classList.remove('hidden');
+    }
+    function hideClue() {
+      activeClue = null;
+      clueBar.classList.add('hidden');
+    }
+
+    /* ── Phase renderers ──────────────────────────────────────── */
+    function renderLobby() {
+      hideClue();
+      setPhase('lobby');
+      phaseRoot.innerHTML = `
+        <div class="lobby-area">
+          <div class="lobby-eyebrow">WAITING ROOM</div>
+          <div class="lobby-title">YOU'RE IN!</div>
+          <div class="lobby-sub">Waiting for the host to start the game…</div>
+        </div>
+      `;
+      setFooter(`Connected · room ${gameId}`, { color: 'var(--mint)' });
+    }
+
+    function renderBuzzer() {
+      setPhase('buzzer');
+      phaseRoot.innerHTML = `
+        <div class="phase-status">
+          <div class="phase-eyebrow">BUZZ WHEN YOU KNOW IT</div>
+          <div class="phase-headline">Listen to the clue…</div>
+        </div>
+        <div class="buzz-area">
+          <div class="buzz-ring r1"></div>
+          <div class="buzz-ring r2"></div>
+          <div class="buzz-ring r3"></div>
+          <button id="buzzBtn" class="buzz-btn">BUZZ</button>
+        </div>
+      `;
+      const btn = document.getElementById('buzzBtn');
+      btn.addEventListener('click', () => {
+        if (!canBuzz || !ws) return;
+        canBuzz = false;
+        ws.send(JSON.stringify({ type: 'BUZZ', clientTime: Date.now() + offset }));
+        btn.disabled = true;
+      });
+    }
+
+    function renderBuzzed() {
+      setPhase('buzzed');
+      hideClue();
+      phaseRoot.innerHTML = `
+        <div class="youre-up-area">
+          <div class="youre-up-headline">YOU'RE<br/>UP!</div>
+          <div class="youre-up-sub">Say your answer out loud to the host.</div>
+        </div>
+      `;
+      setFooter('Host is judging…', { color: 'var(--magenta)', pulse: true });
+    }
+
+    function renderLockedOut(buzzerName) {
+      setPhase('lockedout');
+      phaseRoot.innerHTML = `
+        <div class="big-text-area">
+          <div class="big-text-eyebrow">LOCKED OUT</div>
+          <div class="big-text-headline locked">${buzzerName ? buzzerName.toUpperCase() : 'SOMEONE'}<br/>BUZZED IN</div>
+          <div class="big-text-sub">Wait for the next clue.</div>
+        </div>
+      `;
+      setFooter(`${buzzerName || 'Someone'} is answering…`, { color: 'var(--violet)', pulse: true });
+    }
+
+    function renderCorrect(delta) {
+      setPhase('correct');
+      const amount = delta != null && delta !== 0 ? dollars(Math.abs(delta)) : '';
+      phaseRoot.innerHTML = `
+        <div class="big-text-area">
+          <div class="big-text-eyebrow">YOU GOT IT</div>
+          <div class="big-text-headline correct">CORRECT!</div>
+          ${amount ? `<div class="big-text-sub">+${amount}</div>` : ''}
+        </div>
+      `;
+      setFooter('Nice one.', { color: 'var(--mint)' });
+    }
+
+    function renderWrong(delta) {
+      setPhase('wrong');
+      const amount = delta != null && delta !== 0 ? dollars(Math.abs(delta)) : '';
+      phaseRoot.innerHTML = `
+        <div class="big-text-area">
+          <div class="big-text-eyebrow">NOT QUITE</div>
+          <div class="big-text-headline wrong">WRONG</div>
+          ${amount ? `<div class="big-text-sub">−${amount} · wait for the buzzer to reopen</div>` : '<div class="big-text-sub">Wait for the buzzer to reopen…</div>'}
+        </div>
+      `;
+      setFooter('Hang tight.', { color: 'var(--red)' });
+    }
+
+    function renderBoardPicker() {
+      hideClue();
+      setPhase('lobby');
+      if (!gameState.board) { renderLobby(); return; }
       const cats = gameState.board.categories || [];
-      if (!cats.length) return;
-      boardWrap.classList.remove('hidden');
-      playerBoard.style.gridTemplateColumns = `repeat(${cats.length}, 1fr)`;
-      playerBoard.innerHTML = '';
-      for (const cat of cats) {
-        const h = document.createElement('div');
-        h.className = 'cat-header';
-        h.style.fontSize = '.75rem';
-        h.textContent = cat.title;
-        playerBoard.appendChild(h);
-      }
       const maxQ = Math.max(...cats.map((c) => c.questions.length), 0);
+      const cells = [];
+      for (const cat of cats) cells.push(`<div class="picker-cat">${(cat.title || '').toUpperCase()}</div>`);
       for (let qi = 0; qi < maxQ; qi++) {
         for (const cat of cats) {
-          const q = (cat.questions || []).sort((a, b) => a.value - b.value)[qi];
-          if (!q) { playerBoard.appendChild(document.createElement('div')); continue; }
-          const btn = document.createElement('button');
-          btn.className = 'question-cell' + (gameState.usedQuestions.has(q.id) ? ' used secondary' : '');
-          btn.style.fontSize = '1.05rem';
-          btn.textContent = '$' + q.value;
-          btn.disabled = gameState.usedQuestions.has(q.id);
-          btn.addEventListener('click', () => ws.send(JSON.stringify({ type: 'SELECT_QUESTION', questionId: q.id })));
-          playerBoard.appendChild(btn);
+          const q = (cat.questions || []).slice().sort((a, b) => a.value - b.value)[qi];
+          if (!q) { cells.push('<div></div>'); continue; }
+          const used = gameState.usedQuestions.has(q.id);
+          cells.push(`<button class="picker-cell" data-qid="${q.id}" ${used ? 'disabled' : ''}>${used ? '' : '$' + q.value}</button>`);
         }
       }
+      phaseRoot.innerHTML = `
+        <div class="phase-status">
+          <div class="phase-eyebrow">YOUR PICK</div>
+          <div class="phase-headline">Choose a category.</div>
+        </div>
+        <div class="picker-wrap">
+          <div class="picker-grid" style="grid-template-columns: repeat(${cats.length}, 1fr);">${cells.join('')}</div>
+        </div>
+      `;
+      phaseRoot.querySelectorAll('.picker-cell[data-qid]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          ws.send(JSON.stringify({ type: 'SELECT_QUESTION', questionId: btn.dataset.qid }));
+        });
+      });
+      setFooter(`Connected · room ${gameId}`, { color: 'var(--mint)' });
     }
 
-    function showInput(mode) {
-      inputArea.classList.remove('hidden');
-      inputArea.innerHTML = '';
-      if (mode === 'wager' || mode === 'dd-wager') {
-        const isDd = mode === 'dd-wager';
-        const myScoreVal = gameState.scores.find((s) => s.playerId === playerId)?.score ?? 0;
-        const allVals = (gameState.board?.categories ?? []).flatMap((c) => c.questions.map((q) => q.value));
-        const cap = isDd ? Math.max(myScoreVal, allVals.length ? Math.max(...allVals) : 0) : undefined;
-        inputArea.innerHTML = `
-          ${cap != null ? `<p class="small">Max wager: $${cap}</p>` : '<p class="small">Enter your wager</p>'}
-          <input id="wagerInput" type="number" min="0" ${cap != null ? `max="${cap}"` : ''} placeholder="Wager amount" style="font-size:1.1rem;" />
-          <button id="submitWager" class="accent">Submit Wager</button>`;
-        document.getElementById('submitWager').addEventListener('click', () => {
-          const wager = Math.max(0, Number(document.getElementById('wagerInput').value || 0));
-          ws.send(JSON.stringify({ type: isDd ? 'DAILY_DOUBLE_WAGER' : 'FINAL_WAGER', wager }));
-          inputArea.classList.add('hidden');
-          if (!isDd) setState('Wager Submitted', 'Waiting for everyone...');
-        });
-      }
-      if (mode === 'answer') {
-        inputArea.innerHTML = `
-          <input id="answerInput" placeholder="Type your final answer" style="font-size:1.05rem;" />
-          <button id="submitAnswer" class="accent">Submit Answer</button>`;
-        document.getElementById('submitAnswer').addEventListener('click', () => {
-          ws.send(JSON.stringify({ type: 'FINAL_ANSWER', answer: document.getElementById('answerInput').value }));
-          inputArea.classList.add('hidden');
-          setState('Answer Submitted', 'Waiting for results...');
-        });
-      }
+    function renderWaitingForPicker() {
+      hideClue();
+      setPhase('lobby');
+      const picker = gameState.scores.find((s) => s.playerId === gameState.currentPicker);
+      const name = picker ? picker.displayName.toUpperCase() : 'A PLAYER';
+      phaseRoot.innerHTML = `
+        <div class="lobby-area">
+          <div class="lobby-eyebrow">UP NEXT</div>
+          <div class="lobby-title">${name}</div>
+          <div class="lobby-sub">is picking the next clue…</div>
+        </div>
+      `;
+      setFooter(`Connected · room ${gameId}`, { color: 'var(--mint)' });
     }
 
-    /* ── WebSocket ─────────────────────────────────────────────────────────── */
+    function renderWagerInput({ mode, headline, eyebrow, cap }) {
+      setPhase('lobby');
+      const minWager = mode === 'dd' ? 5 : 0;
+      const capLine = cap != null
+        ? `Wager ${dollars(minWager)} – ${dollars(cap)}`
+        : `Min wager: ${dollars(minWager)}`;
+      phaseRoot.innerHTML = `
+        <div class="phase-status">
+          <div class="phase-eyebrow">${eyebrow}</div>
+          <div class="phase-headline">${headline}</div>
+        </div>
+        <div class="input-area">
+          <div class="small">${capLine}</div>
+          <input id="wagerInput" type="number" min="${minWager}" ${cap != null ? `max="${cap}"` : ''} placeholder="$" />
+          <button id="submitWager">SUBMIT WAGER →</button>
+          <p id="wagerErr" class="small" style="color: var(--red); min-height: 1.2em;"></p>
+        </div>
+      `;
+      document.getElementById('submitWager').addEventListener('click', () => {
+        const raw = Number(document.getElementById('wagerInput').value || 0);
+        const wager = Math.floor(raw);
+        const errEl = document.getElementById('wagerErr');
+        if (!Number.isFinite(wager) || wager < minWager) {
+          errEl.textContent = `Minimum wager is ${dollars(minWager)}.`;
+          return;
+        }
+        if (cap != null && wager > cap) {
+          errEl.textContent = `Maximum wager is ${dollars(cap)}.`;
+          return;
+        }
+        ws.send(JSON.stringify({ type: mode === 'dd' ? 'DAILY_DOUBLE_WAGER' : 'FINAL_WAGER', wager }));
+        renderWaiting(mode === 'dd' ? 'Wager locked in.' : 'Waiting for everyone…');
+      });
+    }
+
+    function renderAnswerInput() {
+      setPhase('lobby');
+      phaseRoot.innerHTML = `
+        <div class="phase-status">
+          <div class="phase-eyebrow">FINAL JEOPARDY</div>
+          <div class="phase-headline">Type your final answer.</div>
+        </div>
+        <div id="countdown" class="countdown hidden"></div>
+        <div class="input-area">
+          <input id="answerInput" placeholder="YOUR ANSWER" />
+          <button id="submitAnswer">SUBMIT →</button>
+        </div>
+      `;
+      document.getElementById('submitAnswer').addEventListener('click', () => {
+        ws.send(JSON.stringify({ type: 'FINAL_ANSWER', answer: document.getElementById('answerInput').value }));
+        renderWaiting('Answer submitted. Waiting for results…');
+      });
+    }
+
+    function renderWaiting(text) {
+      setPhase('lobby');
+      phaseRoot.innerHTML = `
+        <div class="lobby-area">
+          <div class="lobby-eyebrow">HOLD ON</div>
+          <div class="lobby-title">${text.split('.')[0].toUpperCase()}</div>
+        </div>
+      `;
+      setFooter(text, { color: 'var(--gold)', pulse: true });
+    }
+
+    function renderGameOver(winner) {
+      hideClue();
+      setPhase('lobby');
+      const name = winner ? winner.displayName.toUpperCase() : 'NOBODY';
+      const score = winner ? dollars(winner.score) : '';
+      phaseRoot.innerHTML = `
+        <div class="lobby-area">
+          <div class="lobby-eyebrow">FINAL SCORES</div>
+          <div class="lobby-title">${name} WINS</div>
+          <div class="lobby-sub">${score}</div>
+          <ul class="scores" id="finalScores"></ul>
+          <button id="returnHomeBtn" class="join-btn" style="margin-top: 24px; font-size: 22px; padding: 16px 28px; width: auto;">← BACK TO HOME</button>
+        </div>
+      `;
+      const list = document.getElementById('finalScores');
+      const items = gameState.teamMode && gameState.teams.length
+        ? gameState.teams.map((t) => ({ name: t.name, score: t.score }))
+        : gameState.scores.map((s) => ({ name: s.displayName, score: s.score }));
+      items.sort((a, b) => b.score - a.score).forEach((item) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${item.name}</span><strong>${dollars(item.score)}</strong>`;
+        list.appendChild(li);
+      });
+      document.getElementById('returnHomeBtn')?.addEventListener('click', () => {
+        location.href = '/';
+      });
+      setFooter('Thanks for playing!', { color: 'var(--gold)' });
+    }
+
+    function renderKicked() {
+      hideClue();
+      setPhase('lockedout');
+      phaseRoot.innerHTML = `
+        <div class="big-text-area">
+          <div class="big-text-eyebrow">REMOVED</div>
+          <div class="big-text-headline wrong">KICKED</div>
+          <div class="big-text-sub">You were removed from the game.</div>
+          <button id="returnHomeBtn" class="join-btn" style="margin-top: 24px; font-size: 22px; padding: 16px 28px; width: auto;">← BACK TO HOME</button>
+        </div>
+      `;
+      document.getElementById('returnHomeBtn')?.addEventListener('click', () => {
+        location.href = '/';
+      });
+      setFooter('Disconnected', { color: 'var(--red)' });
+    }
+
+    /* ── WebSocket ─────────────────────────────────────────────── */
     let ws;
-    let lastStateTime = 0;
-    let pingSentAt = 0;
-
     function sendPing() {
       if (!ws || ws.readyState !== 1) return;
       pingSentAt = Date.now();
@@ -226,17 +896,18 @@ const initialPlayerId = payload?.playerId ?? '';
     function connect() {
       if (!playerToken) return;
       const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?gameId=${encodeURIComponent(gameId)}&token=${encodeURIComponent(playerToken)}`;
-      
       if (ws) { ws.onclose = null; ws.close(); }
       ws = new WebSocket(wsUrl);
 
       ws.addEventListener('open', () => {
         console.log('[Player] Connected to WebSocket');
         sendPing();
+        setFooter(`Connected · room ${gameId}`, { color: 'var(--mint)' });
       });
 
-      ws.addEventListener('close', () => { 
-        setTimeout(connect, 2000); 
+      ws.addEventListener('close', () => {
+        setFooter('Reconnecting…', { color: 'var(--red)', pulse: true });
+        setTimeout(connect, 2000);
       });
 
       ws.addEventListener('message', (event) => {
@@ -259,128 +930,158 @@ const initialPlayerId = payload?.playerId ?? '';
         }
 
         if (msg.type === 'GAME_START') {
-          setState('Game On!', 'Watch the screen!');
-          isMyTurn = false;
-          renderBoard();
+          isMyTurn = !!(playerId && gameState.currentPicker === playerId);
+          if (isMyTurn) renderBoardPicker(); else renderWaitingForPicker();
         }
 
         if (msg.type === 'ROUND_ADVANCE') {
-          setState('Next Round!', msg.roundTitle);
           gameState.usedQuestions = new Set();
-          renderBoard();
+          isMyTurn = !!(playerId && gameState.currentPicker === playerId);
+          if (isMyTurn) renderBoardPicker(); else renderWaitingForPicker();
         }
 
         if (msg.type === 'QUESTION_OPEN') {
-          buzzBtn.classList.add('hidden');
-          countdown.classList.add('hidden');
           canBuzz = false;
+          showClue(msg.category || msg.categoryTitle, msg.value);
           if (msg.isDailyDouble) {
-            sounds.dailyDouble();
-            setState('⭐ Daily Double!', msg.questionText);
             if (gameState.currentPicker === playerId) {
-              showInput('dd-wager');
+              const myScore = myScoreEntry()?.score ?? 0;
+              const cats = gameState.board?.categories ?? [];
+              let highestRemaining = 0;
+              for (const cat of cats) {
+                for (const q of cat.questions) {
+                  if (gameState.usedQuestions.has(q.id)) continue;
+                  if (q.id === msg.questionId) continue; // exclude the current DD itself
+                  if (q.value > highestRemaining) highestRemaining = q.value;
+                }
+              }
+              const cap = Math.max(myScore, highestRemaining);
+              renderWagerInput({
+                mode: 'dd',
+                eyebrow: '⭐ DAILY DOUBLE',
+                headline: 'Set your wager.',
+                cap,
+              });
             } else {
-              setState('⭐ Daily Double!', msg.questionText + '\nWaiting for ' + (gameState.scores.find(s => s.playerId === gameState.currentPicker)?.displayName ?? 'player') + '\'s wager...');
+              const picker = gameState.scores.find((s) => s.playerId === gameState.currentPicker);
+              renderWaiting(`Waiting for ${picker?.displayName ?? 'player'}'s wager…`);
             }
           } else {
-            setState('Question!', msg.questionText);
-            inputArea.classList.add('hidden');
+            renderBuzzer();
           }
-          boardWrap.classList.add('hidden');
         }
 
         if (msg.type === 'BUZZER_OPEN') {
-          sounds.buzzerOpen();
           canBuzz = true;
-          buzzBtn.classList.remove('hidden');
-          buzzBtn.classList.add('buzzer-ready');
-          countdown.classList.add('hidden');
-          setState('BUZZ!', 'Buzz when you know it. Earliest buzz wins after everyone has a moment to ring in.');
+          renderBuzzer();
         }
 
         if (msg.type === 'BUZZ_WINNER') {
           canBuzz = false;
-          buzzBtn.classList.remove('hidden', 'buzzer-ready');
-          buzzBtn.classList.add('hidden');
-          countdown.classList.add('hidden');
           if (msg.playerId === playerId) {
-            sounds.buzzIn();
-            setState("You're in! 🎤", 'Answer out loud!');
-            buzzBtn.classList.add('hidden');
+            renderBuzzed();
           } else {
-            setState('🔒 Locked out', msg.displayName + ' buzzed in!');
+            renderLockedOut(msg.displayName);
           }
         }
 
         if (msg.type === 'QUESTION_RESULT') {
           if (msg.playerId === playerId) {
-            if (msg.correct) {
-              sounds.correct();
-              setState('✓ Correct!', '+$' + Math.abs(msg.newScore - (gameState.scores.find(s => s.playerId === playerId)?.score ?? 0)));
-            } else {
-              sounds.wrong();
-              setState('✗ Wrong', 'Wait for buzzer to reopen...');
-            }
+            const prev = myScoreEntry()?.score ?? 0;
+            const delta = msg.newScore - prev;
+            if (msg.correct) renderCorrect(delta);
+            else renderWrong(delta);
           }
-          // Update local score optimistically
           const s = gameState.scores.find((s) => s.playerId === msg.playerId);
           if (s) s.score = msg.newScore;
-          updateMyScore();
+          updateHeader();
         }
 
         if (msg.type === 'QUESTION_CLOSED') {
           canBuzz = false;
-          buzzBtn.classList.add('hidden');
-          buzzBtn.classList.remove('buzzer-ready');
-          countdown.classList.add('hidden');
-          inputArea.classList.add('hidden');
+          hideClue();
           isMyTurn = !!(playerId && gameState.currentPicker === playerId);
-          setState(isMyTurn ? 'Your Pick!' : 'Board', isMyTurn ? 'Tap a question to pick.' : '');
-          renderBoard();
+          if (isMyTurn) renderBoardPicker(); else renderWaitingForPicker();
         }
 
         if (msg.type === 'START_FINAL_JEOPARDY') {
-          sounds.finalTheme();
-          setState('Final Jeopardy', 'Enter your wager!');
-          showInput('wager');
+          const myScore = myScoreEntry()?.score ?? 0;
+          if (myScore <= 0) {
+            // Not eligible — show "you're out" message
+            setPhase('lockedout');
+            hideClue();
+            phaseRoot.innerHTML = `
+              <div class="big-text-area">
+                <div class="big-text-eyebrow">FINAL JEOPARDY</div>
+                <div class="big-text-headline locked">SPECTATING</div>
+                <div class="big-text-sub">Only players with a positive score play Final Jeopardy.</div>
+              </div>
+            `;
+            setFooter('Watch the screen', { color: 'var(--violet)' });
+            return;
+          }
+          if (msg.category) showClue(msg.category, 0);
+          renderWagerInput({
+            mode: 'final',
+            eyebrow: 'FINAL JEOPARDY',
+            headline: 'Set your wager.',
+            cap: myScore,
+          });
         }
 
         if (msg.type === 'FINAL_JEOPARDY_START') {
-          setState('Final Jeopardy', msg.questionText);
-          inputArea.classList.add('hidden');
-          showInput('answer');
+          const myScore = myScoreEntry()?.score ?? 0;
+          if (myScore <= 0) return; // ineligible spectators don't see the answer prompt
+          showClue(msg.category || 'FINAL JEOPARDY', 0);
+          renderAnswerInput();
           let left = 30;
           clearInterval(finalTimer);
-          countdown.classList.remove('hidden');
-          finalTimer = setInterval(() => {
-            left--;
+          const countdown = document.getElementById('countdown');
+          if (countdown) {
+            countdown.classList.remove('hidden');
             countdown.textContent = left + 's';
-            countdown.className = 'countdown' + (left <= 5 ? ' urgent' : '');
-            if (left <= 0) { clearInterval(finalTimer); countdown.classList.add('hidden'); }
-          }, 1000);
+            finalTimer = setInterval(() => {
+              left--;
+              if (!countdown.isConnected) { clearInterval(finalTimer); return; }
+              countdown.textContent = left + 's';
+              countdown.classList.toggle('urgent', left <= 5);
+              if (left <= 0) {
+                clearInterval(finalTimer);
+                countdown.classList.add('hidden');
+                // Auto-submit whatever's in the answer field when time expires
+                const ans = document.getElementById('answerInput');
+                if (ans && ws?.readyState === 1) {
+                  ws.send(JSON.stringify({ type: 'FINAL_ANSWER', answer: ans.value || '' }));
+                  renderWaiting('Time! Waiting for results…');
+                }
+              }
+            }, 1000);
+          }
+        }
+
+        if (msg.type === 'FINAL_RESPONSE_REVEAL') {
+          // A response is being revealed publicly. Update local scores; presenter shows the dramatic version.
+          const s = gameState.scores.find((s) => s.playerId === msg.playerId);
+          if (s) s.score = msg.newScore;
+          updateHeader();
         }
 
         if (msg.type === 'GAME_OVER') {
-          sounds.gameOver();
           clearInterval(finalTimer);
           gameState.scores = msg.scores || gameState.scores;
           gameState.teams = msg.teams || gameState.teams;
-          renderScores();
+          updateHeader();
           const winner = [...gameState.scores].sort((a, b) => b.score - a.score)[0];
-          setState('Game Over! 🏆', winner ? winner.displayName + ' wins with $' + winner.score + '!' : 'Thanks for playing!');
-          buzzBtn.classList.add('hidden');
-          inputArea.classList.add('hidden');
-          countdown.classList.add('hidden');
+          renderGameOver(winner);
         }
 
         if (msg.type === 'PLAYER_KICKED' && msg.playerId === playerId) {
-          setState('Kicked', 'You were removed from the game.');
+          renderKicked();
           if (ws) ws.close();
         }
       });
     }
 
-    // Heartbeat
     setInterval(() => {
       if (ws && ws.readyState === 1) sendPing();
       else if (playerToken && (!ws || ws.readyState === 3)) connect();
@@ -400,27 +1101,32 @@ const initialPlayerId = payload?.playerId ?? '';
       gameState.teams = state.teams || [];
       gameState.currentPicker = state.currentPicker;
       gameState.teamMode = state.teamMode ?? false;
+      gameState.status = state.status || 'lobby';
       isMyTurn = !!(playerId && gameState.currentPicker === playerId);
 
-      // Status handling
-      if (state.status === 'lobby') {
-        setState('Lobby', 'Waiting for the host to start...');
-      } else if (state.status === 'active') {
-        if (!isMyTurn) setState('Watch the Screen', 'Someone else is picking.');
-        else setState('Your Pick!', 'Choose a category and value.');
-      } else if (state.status === 'final_jeopardy') {
-        setState('Final Jeopardy', 'Pay attention to the screen!');
-      }
+      updateHeader();
 
-      renderScores();
-      renderBoard();
+      // Don't blow away an active mid-question UI on every sync; only re-render passive states.
+      const phase = phone.dataset.phase;
+      if (phase === 'buzzer' || phase === 'buzzed' || phase === 'lockedout' || phase === 'correct' || phase === 'wrong') return;
+
+      if (gameState.status === 'lobby') renderLobby();
+      else if (gameState.status === 'active') {
+        if (isMyTurn) renderBoardPicker();
+        else renderWaitingForPicker();
+      } else if (gameState.status === 'final_jeopardy') {
+        // Server will drive the wager/answer phase via explicit messages
+        if (phase !== 'lobby') renderWaiting('Final Jeopardy — watch the screen.');
+      }
     }
 
-    /* ── Join form ─────────────────────────────────────────────────────────── */
-    document.getElementById('joinBtn').addEventListener('click', async () => {
+    /* ── Join form ─────────────────────────────────────────────── */
+    document.getElementById('joinBtn')?.addEventListener('click', async () => {
       const name = document.getElementById('displayName').value.trim();
       const msgEl = document.getElementById('joinMsg');
-      if (!name) { msgEl.textContent = 'Enter a nickname.'; msgEl.style.color = 'var(--bad)'; return; }
+      if (!name) { msgEl.textContent = 'Enter your name.'; return; }
+      try { localStorage.setItem('jp.displayName', name); } catch {}
+
       const res = await fetch(`/api/games/${gameId}/join`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -429,27 +1135,29 @@ const initialPlayerId = payload?.playerId ?? '';
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         msgEl.textContent = json.error || 'Could not join.';
-        msgEl.style.color = 'var(--bad)';
         return;
       }
       const json = await res.json();
       playerToken = json.token;
       playerId = json.playerId;
-      document.getElementById('joinCard').classList.add('hidden');
-      document.getElementById('app').classList.remove('hidden');
+      joinView.classList.add('hidden');
+      gameView.classList.remove('hidden');
+      phone.dataset.phase = 'lobby';
+      renderLobby();
       connect();
     });
 
-    /* ── Buzz button ───────────────────────────────────────────────────────── */
-    buzzBtn.addEventListener('click', () => {
-      if (!canBuzz || !ws) return;
-      canBuzz = false;
-      buzzBtn.classList.remove('buzzer-ready');
-      ws.send(JSON.stringify({ type: 'BUZZ', clientTime: Date.now() + offset }));
-    });
+    /* ── Pre-fill ──────────────────────────────────────────────── */
+    try {
+      const savedName = localStorage.getItem('jp.displayName');
+      const el = document.getElementById('displayName');
+      if (savedName && el) el.value = savedName;
+    } catch {}
 
-    // Auto-connect if already joined
-    if (isJoined) connect();
+    if (isJoined) {
+      renderLobby();
+      connect();
+    }
   </script>
 </body>
 </html>

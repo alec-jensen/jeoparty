@@ -4,7 +4,15 @@ import { eq, desc } from 'drizzle-orm';
 
 export const GET: APIRoute = async ({ locals }) => {
   if (!locals.host) return new Response('Unauthorized', { status: 401 });
-  const rows = await db.select({ id: schema.boards.id, title: schema.boards.title, createdAt: schema.boards.createdAt, updatedAt: schema.boards.updatedAt })
+  const rows = await db.select({
+    id: schema.boards.id,
+    title: schema.boards.title,
+    finalCategory: schema.boards.finalCategory,
+    finalQuestion: schema.boards.finalQuestion,
+    finalAnswer: schema.boards.finalAnswer,
+    createdAt: schema.boards.createdAt,
+    updatedAt: schema.boards.updatedAt,
+  })
     .from(schema.boards)
     .where(eq(schema.boards.hostId, locals.host.hostId))
     .orderBy(desc(schema.boards.updatedAt));

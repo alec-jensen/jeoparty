@@ -266,6 +266,17 @@ const seed = {
 
       <!-- Start Game CTA (Lobby only) -->
       <div id="lobbyCTA" class="clue-card" style="text-align: center; border-color: var(--gold);">
+        <!-- Team mode toggle (changeable while in lobby) -->
+        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; font-size: 11px; letter-spacing: 0.12em; color: var(--dim);">
+          <button id="lobbyModeSolo" class="mini-stepper" style="padding: 0 10px; height: 28px; font-size: 11px;">SOLO</button>
+          <button id="lobbyModeTeams" class="mini-stepper" style="padding: 0 10px; height: 28px; font-size: 11px;">TEAMS</button>
+          <div id="lobbyTeamCount" style="display: none; align-items: center; gap: 6px;">
+            <button id="lobbyTeamMinus" class="mini-stepper" style="width: 28px; height: 28px; padding: 0;">−</button>
+            <span id="lobbyTeamN" style="font-family: 'Anton', sans-serif; font-size: 18px; color: var(--ink); min-width: 28px; text-align: center;">2</span>
+            <button id="lobbyTeamPlus" class="mini-stepper" style="width: 28px; height: 28px; padding: 0;">+</button>
+            <span style="font-size: 10px; letter-spacing: 0.1em;">TEAMS</span>
+          </div>
+        </div>
         <button id="startGameBtn" class="btn-judge btn-correct" style="width: 100%; margin-bottom: 12px;">
           ▶ START GAME
         </button>
@@ -297,6 +308,21 @@ const seed = {
       <button class="mini-stepper" style="width: 200px; height: 50px; font-size: 14px;" id="menuPresenter">📺 Presenter View</button>
       <button class="mini-stepper" style="width: 200px; height: 50px; font-size: 14px;" id="menuFinal">🏁 Final Jeopardy</button>
       <button class="mini-stepper" style="width: 200px; height: 50px; font-size: 14px; color: var(--red);" id="menuEnd">■ End Game</button>
+    </div>
+
+    <!-- Final Jeopardy: host judges + reveals each response -->
+    <div id="finalModal" class="modal-overlay hidden" style="flex-direction: column; gap: 14px; overflow-y: auto;">
+      <button class="btn-close-modal" id="closeFinalModal">✕</button>
+      <div style="font-family: 'Anton', sans-serif; font-size: 24px; color: var(--gold); text-align: center;">FINAL JEOPARTY · RESPONSES</div>
+      <div id="finalClueBox" style="background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; max-width: 720px; margin: 0 auto;">
+        <div id="finalCatLabel" style="font-size: 11px; color: var(--dim); letter-spacing: 0.22em;"></div>
+        <div id="finalQText" style="font-family: 'Anton', sans-serif; font-size: 22px; margin-top: 8px;"></div>
+        <div id="finalCorrect" style="font-size: 13px; color: var(--mint); margin-top: 8px;"></div>
+      </div>
+      <div id="finalResponseList" style="display: flex; flex-direction: column; gap: 10px; max-width: 720px; width: 100%; margin: 0 auto;"></div>
+      <div style="font-size: 11px; color: var(--dim); text-align: center; max-width: 540px; margin: 0 auto;">
+        Judge each response, then reveal them in order — incorrect first, correct last — for maximum suspense.
+      </div>
     </div>
 
   </div>
@@ -363,12 +389,11 @@ const seed = {
       if (msg.type === 'SYNC_STATE' || msg.type === 'BOARD_STATE') {
         applySyncState(msg);
       } else if (msg.type === 'BUZZ_WINNER') {
-        document.getElementById('skipClueWrap').classList.add('hidden');
         renderJudging(msg);
       } else if (msg.type === 'QUESTION_CLOSED') {
         openQuestion = null;
         buzzWinnerId = null;
-        document.getElementById('skipClueWrap').classList.add('hidden');
+        document.getElementById('skipClueWrap').classList.add('hidden'); // no clue active
         updateClueCard();
         document.getElementById('judgePanel').classList.add('hidden');
         document.getElementById('judgePanel').classList.remove('judge-active');
@@ -378,10 +403,38 @@ const seed = {
         openQuestion = msg;
         document.getElementById('judgePanel').classList.add('hidden');
         document.getElementById('judgePanel').classList.remove('judge-active');
-        document.getElementById('skipClueWrap').classList.toggle('hidden', !!msg.isDailyDouble);
+        // Skip is always available — host needs it for "no winner, same picker again"
+        document.getElementById('skipClueWrap').classList.remove('hidden');
         updateClueCard();
         renderPlayerList();
+      } else if (msg.type === 'GAME_OVER') {
+        showGameOverOverlay(msg);
+      } else if (msg.type === 'FINAL_JEOPARDY_REVEAL') {
+        showFinalModal(msg);
+      } else if (msg.type === 'FINAL_RESPONSE_REVEAL') {
+        // Reflect newly-revealed state in the modal if open
+        finalState.revealed[msg.playerId] = true;
+        renderFinalResponses();
       }
+    }
+
+    function showGameOverOverlay(msg) {
+      let overlay = document.getElementById('gameOverOverlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'gameOverOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,11,34,0.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(8px);text-align:center;padding:2rem;';
+        document.body.appendChild(overlay);
+      }
+      const winners = (msg.scores || []).slice().sort((a, b) => b.score - a.score);
+      const winner = winners[0];
+      overlay.innerHTML = `
+        <div style="font-family:'Anton',sans-serif;font-size:1.4rem;color:var(--dim);letter-spacing:0.32em;">GAME OVER</div>
+        <div style="font-family:'Anton',sans-serif;font-size:5rem;color:var(--gold);letter-spacing:0.04em;margin-top:0.5rem;">${winner ? winner.displayName.toUpperCase() + ' WINS' : 'NO WINNER'}</div>
+        ${winner ? `<div style="font-family:'Anton',sans-serif;font-size:2rem;color:var(--ink);margin-top:0.5rem;">$${(winner.score || 0).toLocaleString()}</div>` : ''}
+        <button id="hostHomeBtn" style="margin-top:2rem;font-family:'Anton',sans-serif;font-size:1.3rem;background:var(--gold);color:#0E0B22;border:none;padding:1rem 2rem;border-radius:999px;cursor:pointer;letter-spacing:0.08em;">← BACK TO DASHBOARD</button>
+      `;
+      document.getElementById('hostHomeBtn').onclick = () => { location.href = '/dashboard'; };
     }
 
     function applySyncState(state) {
@@ -396,6 +449,13 @@ const seed = {
       const totalQ = rounds[currentRound]?.categories.reduce((s, c) => s + c.questions.length, 0) || 0;
       document.getElementById('roundInfo').textContent = `ROUND ${currentRound + 1} · ${usedSet.size}/${totalQ}`;
       document.getElementById('lobbyCTA').classList.toggle('hidden', state.status !== 'lobby');
+
+      // Sync team config from server
+      if (typeof state.teamMode === 'boolean') {
+        lobbyConfig.teamMode = state.teamMode;
+        lobbyConfig.numTeams = (state.teams || []).length || lobbyConfig.numTeams;
+        applyLobbyConfigUI();
+      }
       
       renderPlayerList();
       renderBoard();
@@ -419,10 +479,15 @@ const seed = {
         return;
       }
 
-      cat.textContent = openQuestion.categoryTitle;
+      cat.textContent = openQuestion.isDailyDouble
+        ? `★ DAILY DOUBLE · ${openQuestion.categoryTitle}`
+        : openQuestion.categoryTitle;
       val.textContent = `$${openQuestion.value}`;
       text.textContent = openQuestion.questionText;
-      
+      // Highlight the card border for Daily Double
+      card.style.borderColor = openQuestion.isDailyDouble ? 'var(--magenta)' : '';
+      card.style.boxShadow = openQuestion.isDailyDouble ? '0 0 24px rgba(255,61,142,0.35)' : '';
+
       // Find answer
       let ans = answerTextForOpenQuestion() || '...';
       ansTxt.textContent = `WHAT IS ${ans.toUpperCase()}?`;
@@ -515,18 +580,28 @@ const seed = {
           const cell = document.createElement('div');
           cell.style.borderRadius = '8px';
           cell.style.background = 'var(--bg4)';
+          cell.style.position = 'relative';
           cell.style.display = 'flex';
+          cell.style.flexDirection = 'column';
           cell.style.alignItems = 'center';
           cell.style.justifyContent = 'center';
           cell.style.fontFamily = 'Anton';
-          cell.style.fontSize = '14px';
+          cell.style.fontSize = '18px';
           cell.style.color = 'var(--gold)';
           cell.style.border = '1px solid var(--line)';
+          cell.style.minHeight = '54px';
+          cell.style.cursor = q && !usedSet.has(q.id) ? 'pointer' : 'default';
           if (!q || usedSet.has(q.id)) {
-            cell.style.opacity = '0.1';
+            cell.style.opacity = '0.18';
             cell.textContent = q ? `$${q.value}` : '';
           } else {
-            cell.textContent = `$${q.value}`;
+            cell.innerHTML = `<div>$${q.value}</div>` + (q.isDailyDouble
+              ? `<div style="font-size: 9px; letter-spacing: 0.18em; color: var(--magenta); margin-top: 2px;">★ DAILY DOUBLE</div>`
+              : '');
+            if (q.isDailyDouble) {
+              cell.style.borderColor = 'var(--magenta)';
+              cell.style.boxShadow = '0 0 12px rgba(255,61,142,0.25)';
+            }
             cell.onclick = () => {
               ws.send(JSON.stringify({ type: 'OPEN_QUESTION', questionId: q.id }));
               document.getElementById('boardModal').classList.add('hidden');
@@ -557,6 +632,105 @@ const seed = {
     document.getElementById('skipClueBtn').onclick = () => ws.send(JSON.stringify({ type: 'SKIP_QUESTION' }));
     document.getElementById('menuPresenter').onclick = () => window.open(`/game/${gameId}`, '_blank');
     document.getElementById('menuEnd').onclick = () => { if(confirm('End Game?')) ws.send(JSON.stringify({ type: 'END_GAME' })); };
+    document.getElementById('menuFinal').onclick = () => {
+      if (confirm('Start Final Jeopardy?')) ws.send(JSON.stringify({ type: 'START_FINAL_JEOPARDY' }));
+      document.getElementById('menuOverlay').classList.add('hidden');
+    };
+    document.getElementById('closeFinalModal').onclick = () => document.getElementById('finalModal').classList.add('hidden');
+
+    /* ── Lobby team config ───────────────────────────────────────────────── */
+    let lobbyConfig = { teamMode: false, numTeams: 2 };
+    function applyLobbyConfigUI() {
+      const teams = lobbyConfig.teamMode;
+      document.getElementById('lobbyModeSolo').classList.toggle('active', !teams);
+      document.getElementById('lobbyModeTeams').classList.toggle('active', teams);
+      const tc = document.getElementById('lobbyTeamCount');
+      tc.style.display = teams ? 'flex' : 'none';
+      document.getElementById('lobbyTeamN').textContent = String(lobbyConfig.numTeams);
+    }
+    function sendLobbyConfig() {
+      ws.send(JSON.stringify({
+        type: 'SET_TEAM_CONFIG',
+        teamMode: lobbyConfig.teamMode,
+        numTeams: lobbyConfig.numTeams,
+      }));
+    }
+    document.getElementById('lobbyModeSolo').onclick = () => {
+      lobbyConfig.teamMode = false; applyLobbyConfigUI(); sendLobbyConfig();
+    };
+    document.getElementById('lobbyModeTeams').onclick = () => {
+      lobbyConfig.teamMode = true; applyLobbyConfigUI(); sendLobbyConfig();
+    };
+    document.getElementById('lobbyTeamMinus').onclick = () => {
+      lobbyConfig.numTeams = Math.max(2, lobbyConfig.numTeams - 1); applyLobbyConfigUI(); sendLobbyConfig();
+    };
+    document.getElementById('lobbyTeamPlus').onclick = () => {
+      lobbyConfig.numTeams = Math.min(8, lobbyConfig.numTeams + 1); applyLobbyConfigUI(); sendLobbyConfig();
+    };
+    applyLobbyConfigUI();
+
+    /* ── Final Jeopardy reveal modal ────────────────────────────────────── */
+    let finalState = { results: [], judgments: {}, revealed: {} };
+    function showFinalModal(msg) {
+      finalState = {
+        results: msg.results || [],
+        judgments: {},
+        revealed: {},
+        category: msg.category || '',
+        questionText: msg.questionText || '',
+        correctAnswer: msg.correctAnswer || '',
+      };
+      document.getElementById('finalCatLabel').textContent = finalState.category ? `FINAL JEOPARTY · ${finalState.category.toUpperCase()}` : 'FINAL JEOPARTY';
+      document.getElementById('finalQText').textContent = finalState.questionText;
+      document.getElementById('finalCorrect').textContent = finalState.correctAnswer ? `Answer: ${finalState.correctAnswer}` : '';
+      renderFinalResponses();
+      document.getElementById('finalModal').classList.remove('hidden');
+    }
+    function renderFinalResponses() {
+      const list = document.getElementById('finalResponseList');
+      list.innerHTML = '';
+      finalState.results.forEach((r) => {
+        const j = finalState.judgments[r.playerId];
+        const revealed = !!finalState.revealed[r.playerId];
+        const row = document.createElement('div');
+        row.style.cssText = 'background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px;';
+        const judgedColor = j === true ? 'var(--mint)' : j === false ? 'var(--red)' : 'var(--ink)';
+        row.innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-family: 'Anton', sans-serif; font-size: 18px; color: ${judgedColor};">${r.displayName.toUpperCase()}</div>
+              <div style="font-size: 13px; color: var(--dim);">Wager: $${(r.wager || 0).toLocaleString()}</div>
+            </div>
+            <div style="font-size: 11px; letter-spacing: 0.18em; color: var(--dim);">${revealed ? 'REVEALED ✓' : j === true ? 'CORRECT' : j === false ? 'WRONG' : 'PENDING'}</div>
+          </div>
+          <div style="font-family: 'Space Grotesk', sans-serif; font-size: 16px; color: var(--ink); background: var(--bg); border-radius: 8px; padding: 10px 14px; min-height: 36px;">
+            ${(r.answer || '— no response —').replace(/</g, '&lt;')}
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button data-act="wrong" data-pid="${r.playerId}" ${revealed ? 'disabled' : ''} style="flex:1; padding: 10px; background: ${j === false ? 'var(--red)' : 'transparent'}; color: ${j === false ? '#0E0B22' : 'var(--red)'}; border: 1.5px solid var(--red); border-radius: 8px; font-family: 'Anton', sans-serif; letter-spacing: 0.1em; cursor: pointer;">✕ WRONG</button>
+            <button data-act="right" data-pid="${r.playerId}" ${revealed ? 'disabled' : ''} style="flex:1; padding: 10px; background: ${j === true ? 'var(--mint)' : 'transparent'}; color: ${j === true ? '#0E0B22' : 'var(--mint)'}; border: 1.5px solid var(--mint); border-radius: 8px; font-family: 'Anton', sans-serif; letter-spacing: 0.1em; cursor: pointer;">✓ CORRECT</button>
+            <button data-act="reveal" data-pid="${r.playerId}" ${j === undefined || revealed ? 'disabled' : ''} style="flex:1.4; padding: 10px; background: var(--gold); color: #0E0B22; border: none; border-radius: 8px; font-family: 'Anton', sans-serif; letter-spacing: 0.1em; cursor: pointer; opacity: ${j === undefined || revealed ? 0.4 : 1};">REVEAL →</button>
+          </div>
+        `;
+        list.appendChild(row);
+      });
+      list.querySelectorAll('button[data-act]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const pid = btn.dataset.pid;
+          const act = btn.dataset.act;
+          if (act === 'wrong' || act === 'right') {
+            finalState.judgments[pid] = act === 'right';
+            ws.send(JSON.stringify({ type: 'JUDGE_FINAL', playerId: pid, correct: act === 'right' }));
+            renderFinalResponses();
+          } else if (act === 'reveal') {
+            finalState.revealed[pid] = true;
+            ws.send(JSON.stringify({ type: 'REVEAL_FINAL_RESPONSE', playerId: pid }));
+            renderFinalResponses();
+          }
+        });
+      });
+    }
+
   </script>
 </body>
 </html>

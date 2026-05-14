@@ -16,10 +16,150 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
 <head>
   <meta charset="utf-8" />
   <title>Jeoparty — {gameId}</title>
-  <style>
+  <style is:global>
     html, body { height: 100%; overflow: hidden; background: #0E0B22; margin: 0; }
     #scale-root { transform-origin: top left; }
     #conn-status { position: absolute; bottom: 10px; right: 10px; font-size: 0.7rem; color: #333; z-index: 100; opacity: 0.3; }
+
+    /* ── Audio gate (autoplay unlock) ─────────────────────────────────── */
+    #audioGate {
+      position: absolute; inset: 0;
+      background: rgba(14,11,34,0.95);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 200; cursor: pointer;
+      backdrop-filter: blur(8px);
+    }
+    #audioGate.hidden { display: none; }
+    #audioGate .gate-inner { text-align: center; animation: jp-pulse 2s ease-in-out infinite; }
+    #audioGate .gate-title {
+      font-family: 'Anton', sans-serif;
+      font-size: 6rem; color: var(--gold);
+      letter-spacing: 0.04em; line-height: 1;
+      text-shadow: 0 0 40px rgba(255,200,61,0.4);
+    }
+    #audioGate .gate-sub {
+      font-size: 1.5rem; color: var(--dim);
+      margin-top: 1rem; letter-spacing: 0.04em;
+    }
+    @keyframes jp-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    /* ── Lobby/game crossfade ─────────────────────────────────────────── */
+    #lobbyScreen, #gameScreen {
+      position: absolute; inset: 0;
+      opacity: 1;
+      transition: opacity 0.6s ease;
+    }
+    #lobbyScreen.crossfade-out, #gameScreen.crossfade-out {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* ── JEOPARTY 3D intro (full 23-second sequence) ────────────────────── */
+    #jpFlash {
+      position: absolute; inset: 0;
+      overflow: hidden;
+      perspective: 1400px;
+      perspective-origin: 50% 50%;
+      z-index: 150;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse at 50% 50%, rgba(31,25,71,0.6) 0%, rgba(14,11,34,1) 70%),
+        #0E0B22;
+      transition: opacity 0.6s ease;
+    }
+    #jpFlash.hidden { display: none; }
+    /* Subtle starfield via tiny dots */
+    #jpFlash .jp-stars {
+      position: absolute; inset: 0;
+      background-image:
+        radial-gradient(1.5px 1.5px at 12% 28%, #FFE39A 50%, transparent 51%),
+        radial-gradient(1px 1px at 78% 14%, #F4EEFF 50%, transparent 51%),
+        radial-gradient(2px 2px at 33% 72%, #FFC83D 50%, transparent 51%),
+        radial-gradient(1px 1px at 90% 60%, #F4EEFF 50%, transparent 51%),
+        radial-gradient(1.5px 1.5px at 56% 88%, #FFE39A 50%, transparent 51%),
+        radial-gradient(1px 1px at 22% 56%, #F4EEFF 50%, transparent 51%),
+        radial-gradient(1.5px 1.5px at 67% 32%, #FFC83D 50%, transparent 51%),
+        radial-gradient(1px 1px at 44% 12%, #F4EEFF 50%, transparent 51%),
+        radial-gradient(1.5px 1.5px at 86% 84%, #FFE39A 50%, transparent 51%),
+        radial-gradient(1px 1px at 8% 92%, #F4EEFF 50%, transparent 51%);
+      opacity: 0.7;
+      animation: jp-stars-pan 23s linear forwards;
+    }
+    @keyframes jp-stars-pan {
+      0%   { background-position: 0% 0%; opacity: 0; }
+      8%   { opacity: 0.7; }
+      92%  { opacity: 0.7; }
+      100% { background-position: -40% 12%; opacity: 0; }
+    }
+    /* ── Player intro card (slides through middle of intro) ────────────── */
+    .player-intro-card {
+      position: absolute;
+      top: 62%;
+      left: 50%;
+      display: flex; flex-direction: column; align-items: center; gap: 1.2rem;
+      z-index: 3;
+      pointer-events: none;
+      will-change: transform, opacity;
+    }
+    .player-intro-card .pi-eyebrow {
+      font-family: 'Anton', sans-serif;
+      font-size: 1.6rem;
+      letter-spacing: 0.32em;
+      color: var(--dim);
+      text-transform: uppercase;
+    }
+    .player-intro-card .pi-avatar {
+      width: 220px; height: 220px;
+      border-radius: 36px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Anton', sans-serif;
+      font-size: 9rem;
+      color: #0E0B22;
+      font-weight: 800;
+      box-shadow:
+        0 18px 0 rgba(0,0,0,0.5),
+        0 30px 80px rgba(0,0,0,0.5),
+        inset 0 -10px 24px rgba(0,0,0,0.2),
+        inset 0 10px 24px rgba(255,255,255,0.22);
+    }
+    .player-intro-card .pi-name {
+      font-family: 'Anton', sans-serif;
+      font-size: 7rem;
+      color: var(--ink);
+      letter-spacing: 0.04em;
+      line-height: 0.95;
+      text-shadow: 0 0 60px rgba(255,255,255,0.35), 0 6px 0 rgba(0,0,0,0.4);
+      text-transform: uppercase;
+    }
+    .player-intro-card .pi-score {
+      font-family: 'Anton', sans-serif;
+      font-size: 3rem;
+      letter-spacing: 0.06em;
+      text-shadow: 0 0 30px currentColor;
+    }
+    @keyframes player-intro-slide {
+      0%   { opacity: 0; transform: translate(60%, -50%) rotate(6deg) scale(0.85); }
+      15%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1.04); }
+      25%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      80%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      100% { opacity: 0; transform: translate(-170%, -50%) rotate(-6deg) scale(0.85); }
+    }
+
+    /* ── Board fill animation ─────────────────────────────────────────── */
+    @keyframes cell-fill-in {
+      0%   { opacity: 0; transform: scale(0.5) rotateX(-90deg); }
+      60%  { opacity: 1; transform: scale(1.04) rotateX(0deg); }
+      100% { opacity: 1; transform: scale(1) rotateX(0deg); }
+    }
+    .presenter-board-grid.filling .presenter-cat-header,
+    .presenter-board-grid.filling .presenter-q-cell {
+      animation: cell-fill-in 0.45s cubic-bezier(0.2, 0.7, 0.3, 1.2) backwards;
+      transform-style: preserve-3d;
+      backface-visibility: visible;
+    }
   </style>
 </head>
 <body>
@@ -74,7 +214,25 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     <!-- Host controls link (corner) -->
     <a href={`/game/${gameId}/host`} style="position:absolute;top:16px;right:16px;font-size:0.8rem;color:var(--muted);opacity:0.4;" title="Host Controls">⚙ Host</a>
     <div id="conn-status">CONNECTING...</div>
+
+    <!-- Audio unlock gate -->
+    <div id="audioGate" class="hidden">
+      <div class="gate-inner">
+        <div class="gate-title">TAP TO START</div>
+        <div class="gate-sub">Click anywhere to enable sound</div>
+      </div>
+    </div>
+
+    <!-- JEOPARTY flash overlay (intro → board transition) -->
+    <div id="jpFlash" class="hidden"></div>
   </div>
+
+  <script>
+    import { createIntro } from '@/scripts/intro-3d';
+    // Expose to the inline script below so it can mount the Three.js intro
+    (window as any).__createJeopartyIntro = (container: HTMLElement) =>
+      createIntro(container, '/fonts/Anton.typeface.json');
+  </script>
 
   <script is:inline define:vars={{ gameId }}>
     // @ts-nocheck
@@ -98,10 +256,103 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     window.addEventListener('resize', scale);
 
     /* ── State ─────────────────────────────────────────────────────────────── */
-    let gameState = { board: null, usedQuestions: new Set(), scores: [], teams: [], currentPicker: null, currentRound: 0, totalRounds: 1, teamMode: false };
+    let gameState = { board: null, usedQuestions: new Set(), scores: [], teams: [], currentPicker: null, currentRound: 0, totalRounds: 1, teamMode: false, status: 'lobby' };
     let offset = 0;
     const PLAYER_COLORS = ['#FFC83D', '#FF3D8E', '#5EEBC1', '#7C5CFF', '#FF8A3D', '#5BA9FF'];
     let playerColorMap = {};
+
+    /* ── Audio ─────────────────────────────────────────────────────────────── */
+    const SOUNDS = {
+      theme:       { src: '/sounds/theme_song.mp3',       loop: true,  volume: 0.55 },
+      intro:       { src: '/sounds/this_is_jeopardy.mp3', loop: false, volume: 0.9 },
+      boardFill:   { src: '/sounds/board_fill.mp3',       loop: false, volume: 0.75 },
+      correct:     { src: '/sounds/correct.mp3',          loop: false, volume: 0.8 },
+      incorrect:   { src: '/sounds/incorrect.mp3',        loop: false, volume: 0.8 },
+      dailyDouble: { src: '/sounds/daily_double.mp3',     loop: false, volume: 0.85 },
+      think:       { src: '/sounds/think_music.mp3',      loop: true,  volume: 0.55 },
+      timesUp:     { src: '/sounds/times_up.mp3',         loop: false, volume: 0.8 },
+      roundOver:   { src: '/sounds/round_over.mp3',       loop: false, volume: 0.8 },
+    };
+    const audio = {};
+    for (const [k, cfg] of Object.entries(SOUNDS)) {
+      const a = new Audio(cfg.src);
+      a.preload = 'auto';
+      a.loop = cfg.loop;
+      a.volume = cfg.volume;
+      audio[k] = a;
+    }
+    let audioEnabled = false;
+    let awaitingIntro = false;
+    let crossfading = false;
+    let pendingBoardReveal = false;
+    let introTimeouts = [];
+    let introController = null; // Three.js intro controller, lazy-loaded
+
+    function playSound(name) {
+      if (!audioEnabled) return;
+      const a = audio[name]; if (!a) return;
+      try { a.currentTime = 0; a.volume = SOUNDS[name].volume; a.play().catch(() => {}); } catch {}
+    }
+    function stopSound(name) {
+      const a = audio[name]; if (!a) return;
+      try { a.pause(); a.currentTime = 0; } catch {}
+    }
+    function fadeOutSound(name, duration = 1200) {
+      return new Promise((resolve) => {
+        const a = audio[name];
+        if (!a || a.paused) { resolve(); return; }
+        const startVol = a.volume;
+        const steps = 24;
+        let i = 0;
+        const tick = setInterval(() => {
+          i++;
+          a.volume = Math.max(0, startVol * (1 - i / steps));
+          if (i >= steps) {
+            clearInterval(tick);
+            a.pause();
+            a.currentTime = 0;
+            a.volume = startVol;
+            resolve();
+          }
+        }, duration / steps);
+      });
+    }
+    function fadeInSound(name, duration = 800) {
+      if (!audioEnabled) return;
+      const a = audio[name];
+      const cfg = SOUNDS[name];
+      if (!a || !cfg) return;
+      const target = cfg.volume;
+      a.volume = 0;
+      try { a.currentTime = 0; a.play().catch(() => {}); } catch {}
+      const steps = 20;
+      let i = 0;
+      const tick = setInterval(() => {
+        i++;
+        a.volume = Math.min(target, target * (i / steps));
+        if (i >= steps) clearInterval(tick);
+      }, duration / steps);
+    }
+
+    const audioGate = document.getElementById('audioGate');
+    function unlockAudio() {
+      if (audioEnabled) return;
+      // Prime each audio element so subsequent .play() works without user gesture
+      const primes = Object.values(audio).map((a) => {
+        const wasMuted = a.muted;
+        a.muted = true;
+        return a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = wasMuted; }).catch(() => { a.muted = wasMuted; });
+      });
+      Promise.allSettled(primes).then(() => {
+        audioEnabled = true;
+        audioGate.classList.add('hidden');
+        // If the game is already in lobby state, start the theme
+        if (gameState.status === 'lobby') playSound('theme');
+      });
+    }
+    audioGate.addEventListener('click', unlockAudio);
+    // Also unlock on any keypress, in case the gate is hidden but audio isn't enabled yet
+    document.addEventListener('keydown', () => { if (!audioEnabled) unlockAudio(); }, { once: false });
 
     const lobbyScreen    = document.getElementById('lobbyScreen');
     const gameScreen     = document.getElementById('gameScreen');
@@ -179,8 +430,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       }
 
       if (msg.type === 'GAME_START') {
-        lobbyScreen.classList.add('hidden');
-        gameScreen.classList.remove('hidden');
+        startIntroSequence();
       }
 
       if (msg.type === 'QUESTION_OPEN') {
@@ -189,6 +439,11 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         document.getElementById('qCategory').textContent = msg.categoryTitle + ' · ' + valLabel;
         document.getElementById('qText').textContent = msg.questionText;
         questionOverlay.classList.remove('hidden');
+        if (msg.isDailyDouble) playSound('dailyDouble');
+      }
+
+      if (msg.type === 'QUESTION_RESULT') {
+        playSound(msg.correct ? 'correct' : 'incorrect');
       }
 
       if (msg.type === 'BUZZ_WINNER') {
@@ -215,18 +470,39 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       if (msg.type === 'ROUND_ADVANCE') {
         roundNotifTitle.textContent = msg.roundTitle;
         roundNotif.classList.remove('hidden');
+        playSound('roundOver');
         setTimeout(() => roundNotif.classList.add('hidden'), 3500);
+        // Re-fill the new round's board with animation
+        pendingBoardReveal = true;
       }
 
       if (msg.type === 'START_FINAL_JEOPARDY') {
         questionOverlay.classList.add('hidden');
-        document.getElementById('qCategory').textContent = 'FINAL JEOPARDY';
-        document.getElementById('qText').textContent = 'Players are entering their wagers...';
+        document.getElementById('qCategory').textContent =
+          msg.category ? `FINAL JEOPARDY · ${msg.category}` : 'FINAL JEOPARDY';
+        document.getElementById('qText').textContent = 'Players are entering their wagers…';
         questionOverlay.classList.remove('hidden');
       }
 
       if (msg.type === 'FINAL_JEOPARDY_START') {
+        document.getElementById('qCategory').textContent =
+          msg.category ? `FINAL JEOPARDY · ${msg.category}` : 'FINAL JEOPARDY';
         document.getElementById('qText').textContent = msg.questionText;
+        playSound('think');
+      }
+
+      if (msg.type === 'FINAL_RESPONSE_REVEAL') {
+        stopSound('think');
+        // Dramatic reveal: replace the question text with the player's response
+        document.getElementById('qCategory').textContent =
+          `${msg.displayName.toUpperCase()} · ${msg.correct ? '✓' : '✗'} ${msg.wager < 0 ? '-' : ''}$${Math.abs(msg.wager).toLocaleString()}`;
+        document.getElementById('qText').textContent = msg.answer || '— no response —';
+        questionOverlay.classList.remove('hidden');
+        playSound(msg.correct ? 'correct' : 'incorrect');
+        // Update score on the scoreboard
+        const s = gameState.scores.find((x) => x.playerId === msg.playerId);
+        if (s) s.score = msg.newScore;
+        renderScores();
       }
 
       if (msg.type === 'GAME_OVER') {
@@ -234,13 +510,180 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         gameState.teams = msg.teams || gameState.teams;
         renderScores();
         questionOverlay.classList.add('hidden');
-        const winner = [...gameState.scores].sort((a, b) => b.score - a.score)[0];
-        if (winner) {
-          document.getElementById('qCategory').textContent = 'GAME OVER';
-          document.getElementById('qText').textContent = `${winner.displayName} WINS!`;
-          questionOverlay.classList.remove('hidden');
+        stopSound('think');
+        playSound('timesUp');
+        showPresenterGameOver();
+      }
+    }
+
+    function showPresenterGameOver() {
+      let over = document.getElementById('presenterGameOver');
+      if (!over) {
+        over = document.createElement('div');
+        over.id = 'presenterGameOver';
+        over.style.cssText = 'position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,#1F1947 0%,#0E0B22 70%);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.5rem;z-index:60;text-align:center;';
+        document.getElementById('scale-root')?.appendChild(over);
+      }
+      const winners = [...gameState.scores].sort((a, b) => b.score - a.score);
+      const winner = winners[0];
+      over.innerHTML = `
+        <div style="font-family:'Anton',sans-serif;font-size:3rem;color:var(--dim);letter-spacing:0.32em;">GAME OVER</div>
+        <div style="font-family:'Anton',sans-serif;font-size:11rem;line-height:1;color:var(--gold);letter-spacing:0.04em;text-shadow:0 0 80px rgba(255,200,61,0.45);">${winner ? winner.displayName.toUpperCase() : '—'}</div>
+        ${winner ? `<div style="font-family:'Anton',sans-serif;font-size:5rem;line-height:1;color:var(--ink);">${winner.score < 0 ? '-$' : '$'}${Math.abs(winner.score).toLocaleString()}</div>` : ''}
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:1rem;font-family:'Anton',sans-serif;font-size:1.4rem;letter-spacing:0.18em;color:var(--dim);">
+          ${winners.slice(1).map(w => `<div>${w.displayName.toUpperCase()} · ${w.score < 0 ? '-$' : '$'}${Math.abs(w.score).toLocaleString()}</div>`).join('')}
+        </div>
+        <button id="presenterHomeBtn" style="margin-top:2.5rem;font-family:'Anton',sans-serif;font-size:1.6rem;background:var(--gold);color:#0E0B22;border:none;padding:1.2rem 2.6rem;border-radius:999px;cursor:pointer;letter-spacing:0.08em;box-shadow:0 12px 0 #B88A1F, 0 22px 40px rgba(255,200,61,0.25);">← BACK TO HOME</button>
+      `;
+      document.getElementById('presenterHomeBtn').onclick = () => { location.href = '/'; };
+    }
+
+    /* ── Intro sequence ─────────────────────────────────────────────────────── */
+    // Timeline (aligned to ~23s intro audio):
+    //   0s    GAME_START — audio crossfade + lobby fades out
+    //   0s    3D fly-in begins (10s)
+    //   10s   Logo settles up to top of frame (0.7s)
+    //   10.7s Player intros begin (one at a time, ~2s each)
+    //   ~20s  Logo runs fly-out (2.5s) while last card slides off
+    //   23s   Board fills in
+    async function startIntroSequence() {
+      awaitingIntro = true;
+      crossfading = true;
+
+      const flash = document.getElementById('jpFlash');
+      flash.innerHTML = '';
+      flash.appendChild(Object.assign(document.createElement('div'), { className: 'jp-stars' }));
+      flash.style.opacity = '';
+      flash.classList.remove('hidden');
+
+      lobbyScreen.classList.add('crossfade-out');
+      schedule(() => {
+        lobbyScreen.classList.add('hidden');
+        lobbyScreen.classList.remove('crossfade-out');
+      }, 1200);
+
+      gameScreen.classList.add('hidden');
+      gameScreen.classList.remove('crossfade-out');
+
+      const intro = audio.intro;
+      const introDurMs = (audioEnabled && isFinite(intro.duration) && intro.duration > 0)
+        ? intro.duration * 1000
+        : 23000;
+
+      const FLY_IN_MS = 10000;
+      const SETTLE_MS = 700;
+      const FLY_OUT_MS = 2500;
+      const players = (gameState.scores || []).slice();
+
+      // Window available for player intros = total − fly-in − settle − fly-out − safety
+      const playerWindow = Math.max(0, introDurMs - FLY_IN_MS - SETTLE_MS - FLY_OUT_MS - 300);
+      const perPlayer = players.length > 0
+        ? Math.min(2500, Math.floor(playerWindow / players.length))
+        : 0;
+      const playerStart = FLY_IN_MS + SETTLE_MS + 200;
+      const playerEnd = playerStart + players.length * perPlayer;
+      const flyOutStart = Math.max(playerEnd + 100, introDurMs - FLY_OUT_MS);
+
+      // Mount Three.js intro
+      if (!introController && window.__createJeopartyIntro) {
+        try {
+          introController = await window.__createJeopartyIntro(flash);
+        } catch (e) {
+          console.warn('[Intro] Failed to load 3D intro module:', e);
         }
       }
+
+      // Schedule player intros below the logo
+      players.forEach((p, i) => {
+        schedule(() => showPlayerIntro(p, i + 1, players.length, perPlayer), playerStart + i * perPlayer);
+      });
+
+      if (audioEnabled) {
+        fadeOutSound('theme', 1500);
+        fadeInSound('intro', 1000);
+        const onEnd = () => {
+          intro.removeEventListener('ended', onEnd);
+          finishIntroAndRevealBoard();
+        };
+        intro.addEventListener('ended', onEnd);
+      }
+      schedule(finishIntroAndRevealBoard, introDurMs + 200);
+
+      if (introController) {
+        try {
+          await introController.runFlyIn();
+          await introController.settleToTop();
+          // Idle continues automatically in the render loop until runFlyOut.
+          // Wait until it's time for the exit:
+          const now = performance.now();
+          const introStartTime = now - (FLY_IN_MS + SETTLE_MS);
+          const waitMs = Math.max(0, flyOutStart - (now - introStartTime));
+          await new Promise((resolve) => schedule(resolve, waitMs));
+          if (!awaitingIntro) return;
+          await introController.runFlyOut();
+        } catch (e) {
+          console.warn('[Intro] animation error:', e);
+        }
+      }
+    }
+
+    function schedule(fn, delay) {
+      const id = setTimeout(fn, delay);
+      introTimeouts.push(id);
+      return id;
+    }
+
+    function showPlayerIntro(player, idx, total, durationMs) {
+      const flash = document.getElementById('jpFlash');
+      if (!flash || flash.classList.contains('hidden')) return;
+      const color = PLAYER_COLORS[(idx - 1) % PLAYER_COLORS.length];
+      const initial = (player.displayName || '?')[0].toUpperCase();
+      const score = player.score || 0;
+      const scoreStr = score < 0 ? `-$${Math.abs(score).toLocaleString()}` : `$${score.toLocaleString()}`;
+      const card = document.createElement('div');
+      card.className = 'player-intro-card';
+      card.style.animation = `player-intro-slide ${durationMs}ms ease-out forwards`;
+      card.innerHTML = `
+        <div class="pi-eyebrow">Player ${idx} of ${total}</div>
+        <div class="pi-avatar" style="background:${color}">${initial}</div>
+        <div class="pi-name">${player.displayName || '—'}</div>
+        <div class="pi-score" style="color:${color}">${scoreStr}</div>
+      `;
+      flash.appendChild(card);
+      schedule(() => card.remove(), durationMs + 60);
+    }
+
+    function finishIntroAndRevealBoard() {
+      if (!awaitingIntro) return;
+      awaitingIntro = false;
+      // Cancel any pending intro timeouts (so a stray player card doesn't pop in over the board)
+      introTimeouts.forEach(clearTimeout);
+      introTimeouts = [];
+
+      const flash = document.getElementById('jpFlash');
+
+      // Reveal the game screen behind the flash, faded out, then fade it in.
+      gameScreen.classList.remove('hidden');
+      gameScreen.classList.add('crossfade-out');
+      void gameScreen.offsetWidth;
+
+      // Render the board with its fill animation as the flash dissolves
+      playSound('boardFill');
+      renderBoard(true);
+
+      requestAnimationFrame(() => {
+        gameScreen.classList.remove('crossfade-out');
+        flash.style.opacity = '0';
+      });
+
+      // Drop the flash + clear the crossfade lock once it's faded out
+      setTimeout(() => {
+        flash.classList.add('hidden');
+        flash.innerHTML = '';
+        flash.style.opacity = '';
+        if (introController) { try { introController.dispose(); } catch {} introController = null; }
+        crossfading = false;
+      }, 700);
     }
 
     function applySyncState(state) {
@@ -251,6 +694,9 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       lastStateTime = state.serverTime || Date.now();
       if (state.serverTime) offset = state.serverTime - Date.now();
 
+      const prevStatus = gameState.status;
+      const prevRound = gameState.currentRound;
+
       gameState.board = state.board;
       gameState.usedQuestions = new Set(state.usedQuestions || []);
       gameState.scores = state.scores || [];
@@ -259,8 +705,31 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       gameState.currentRound = state.currentRound ?? 0;
       gameState.totalRounds = state.totalRounds ?? 1;
       gameState.teamMode = state.teamMode ?? false;
-      
-      if (state.status === 'active' || state.status === 'final_jeopardy' || state.status === 'finished') {
+      gameState.status = state.status || 'lobby';
+
+      // Show the audio gate the first time we land on the lobby (audio still locked)
+      if (gameState.status === 'lobby' && !audioEnabled) {
+        audioGate.classList.remove('hidden');
+      }
+      // Start theme on lobby if not already playing
+      if (gameState.status === 'lobby' && audioEnabled && audio.theme.paused && !awaitingIntro) {
+        playSound('theme');
+      }
+      // If we land mid-game (page reload during active state), stop theme
+      if (gameState.status !== 'lobby' && audioEnabled && !audio.theme.paused && !awaitingIntro) {
+        fadeOutSound('theme', 600);
+      }
+
+      // Detect a round change mid-active (e.g. round 0 → 1) to trigger board re-fill
+      if (gameState.status === 'active' && prevStatus === 'active' && gameState.currentRound !== prevRound) {
+        pendingBoardReveal = true;
+      }
+
+      const inActive = gameState.status === 'active' || gameState.status === 'final_jeopardy' || gameState.status === 'finished';
+
+      if (awaitingIntro || crossfading) {
+        // Intro or crossfade is in flight — leave screens to that controller
+      } else if (inActive) {
         lobbyScreen.classList.add('hidden');
         gameScreen.classList.remove('hidden');
       } else {
@@ -278,7 +747,12 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         playerList.appendChild(chip);
       });
 
-      renderBoard();
+      if (!awaitingIntro && !crossfading) {
+        const animate = pendingBoardReveal && inActive;
+        pendingBoardReveal = false;
+        if (animate) playSound('boardFill');
+        renderBoard(animate);
+      }
       renderScores();
       updateRoundBadge();
 
@@ -309,7 +783,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     }
 
     /* ── Render board ──────────────────────────────────────────────────────── */
-    function renderBoard() {
+    function renderBoard(animate = false) {
       if (!gameState.board) return;
       const cats = gameState.board.categories || [];
       const numCats = cats.length;
@@ -318,29 +792,41 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       presenterBoard.style.gridTemplateColumns = `repeat(${numCats}, 1fr)`;
       presenterBoard.style.gridTemplateRows = `120px repeat(${maxQ}, 1fr)`;
       presenterBoard.innerHTML = '';
-      // Category headers
-      for (const cat of cats) {
+      presenterBoard.classList.toggle('filling', animate);
+
+      // Category headers (row 0)
+      cats.forEach((cat, col) => {
         const h = document.createElement('div');
         h.className = 'presenter-cat-header';
         h.textContent = cat.title;
+        if (animate) h.style.animationDelay = `${col * 0.08}s`;
         presenterBoard.appendChild(h);
-      }
+      });
+
       // Question rows
       let totalQ = 0, usedQ = 0;
       for (let qi = 0; qi < maxQ; qi++) {
-        for (const cat of cats) {
+        cats.forEach((cat, col) => {
           const q = cat.questions.sort((a, b) => a.value - b.value)[qi];
-          if (!q) { presenterBoard.appendChild(document.createElement('div')); continue; }
+          if (!q) { presenterBoard.appendChild(document.createElement('div')); return; }
           totalQ++;
           const used = gameState.usedQuestions.has(q.id);
           if (used) usedQ++;
           const cell = document.createElement('div');
           cell.className = 'presenter-q-cell' + (used ? ' used' : '');
           if (!used) cell.textContent = '$' + q.value;
+          if (animate) cell.style.animationDelay = `${0.25 + col * 0.08 + qi * 0.06}s`;
           presenterBoard.appendChild(cell);
-        }
+        });
       }
       updateCluesPill(usedQ, totalQ);
+
+      if (animate) {
+        // Total stagger ≈ headers + (maxQ rows). Remove .filling once done so future
+        // re-renders (cells flipping to used, etc.) don't replay the animation.
+        const totalDuration = (0.25 + (numCats - 1) * 0.08 + (maxQ - 1) * 0.06 + 0.5) * 1000;
+        setTimeout(() => presenterBoard.classList.remove('filling'), totalDuration);
+      }
     }
 
     /* ── Render scores ─────────────────────────────────────────────────────── */

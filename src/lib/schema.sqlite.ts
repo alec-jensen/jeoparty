@@ -18,6 +18,9 @@ export const boards = sqliteTable('boards', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   hostId: integer('host_id').notNull().references(() => hosts.id),
   title: text('title').notNull(),
+  finalCategory: text('final_category'),
+  finalQuestion: text('final_question'),
+  finalAnswer: text('final_answer'),
   createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });

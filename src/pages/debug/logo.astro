@@ -1,0 +1,71 @@
+---
+// Debug page for the 3D JEOPARTY intro module.
+// Visit /debug/logo to see the full sequence: fly-in → settle to top → idle → fly-out
+// Use ?font=helvetiker to swap to the bundled Three.js font as a sanity check.
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>3D Logo Debug</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #0E0B22; overflow: hidden; }
+    #stage {
+      position: fixed; inset: 0;
+      background: radial-gradient(ellipse at 50% 50%, #1F1947 0%, #0E0B22 70%);
+    }
+    #info {
+      position: fixed; top: 12px; left: 12px;
+      font-family: monospace; font-size: 12px; color: #FFE39A;
+      background: rgba(0,0,0,0.5); padding: 8px 12px; border-radius: 6px;
+      z-index: 10; white-space: pre;
+    }
+    button.replay {
+      position: fixed; top: 12px; right: 12px;
+      font-family: 'Anton', sans-serif; font-size: 16px; letter-spacing: 0.1em;
+      background: #FFC83D; color: #0E0B22; border: none; padding: 10px 22px;
+      border-radius: 999px; cursor: pointer; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="info">loading…</div>
+  <button class="replay" id="replay">▶ REPLAY</button>
+
+  <script>
+    import { createIntro } from '@/scripts/intro-3d';
+    const info = document.getElementById('info')!;
+    const stage = document.getElementById('stage')!;
+    const replay = document.getElementById('replay') as HTMLButtonElement;
+
+    const fontUrl = new URLSearchParams(location.search).get('font') === 'helvetiker'
+      ? '/fonts/helvetiker_bold.typeface.json'
+      : '/fonts/Anton.typeface.json';
+
+    let ctrl: Awaited<ReturnType<typeof createIntro>> | null = null;
+
+    async function run() {
+      info.textContent = `loading ${fontUrl}…`;
+      replay.disabled = true;
+      if (ctrl) { ctrl.dispose(); ctrl = null; }
+      ctrl = await createIntro(stage, fontUrl);
+      info.textContent = 'fly-in (10s)';
+      await ctrl.runFlyIn();
+      info.textContent = 'settle to top (0.7s)';
+      await ctrl.settleToTop();
+      info.textContent = 'idle at top — fly-out in 9s';
+      await new Promise(r => setTimeout(r, 9000));
+      info.textContent = 'fly-out (2.5s)';
+      await ctrl.runFlyOut();
+      info.textContent = 'done';
+      replay.disabled = false;
+    }
+
+    replay.addEventListener('click', () => run());
+    run().catch((e) => {
+      info.textContent = 'ERROR: ' + e.message;
+      console.error(e);
+    });
+  </script>
+</body>
+</html>

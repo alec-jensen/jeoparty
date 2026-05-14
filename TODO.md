@@ -1,2 +1,14 @@
-- [ ] TEST PLAYER TIME SYNC
 - [ ] test buzz timing is correct
+- [x] sound effects
+- [ ] when a game is started, it should send to the presenter view, not the host view
+- [ ] skip buzz collection period if all players have buzzed in
+- [ ] when the host ends the game, add a button to every device to return to the homepage
+- [ ] final jeopardy required (needs support in the board editor)
+- [ ] board selection in the dashboard doesnt work
+- [ ] team mode (any N number of teams, changable while still in the lobby)
+- [ ] better game state management. actually remove a game when it ends, remove a game if its been idle for a long time, etc.
+- [ ] host controls
+  - [ ] better board view for host
+  - [ ] host can see which questions are daily doubled
+
+- [ ] use the 3d jeoparty logo in more places

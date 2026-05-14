@@ -9,7 +9,14 @@ const host = Astro.locals.host;
 const ACCENT_COLORS = ['#FFC83D', '#FF3D8E', '#5EEBC1', '#7C5CFF', '#5BA9FF', '#FF8A3D'];
 
 const rawBoards = await db
-  .select({ id: schema.boards.id, title: schema.boards.title, updatedAt: schema.boards.updatedAt })
+  .select({
+    id: schema.boards.id,
+    title: schema.boards.title,
+    updatedAt: schema.boards.updatedAt,
+    finalCategory: schema.boards.finalCategory,
+    finalQuestion: schema.boards.finalQuestion,
+    finalAnswer: schema.boards.finalAnswer,
+  })
   .from(schema.boards)
   .where(eq(schema.boards.hostId, host.hostId))
   .orderBy(desc(schema.boards.updatedAt));
@@ -98,6 +105,8 @@ const boards = rawBoards.map((b, i) => {
   const clues = cluesByBoard.get(b.id) ?? 0;
   const stats = gameStatsByBoard.get(b.id);
   const plays = Number(stats?.plays ?? 0);
+  const finalReady = !!(b.finalCategory?.trim() && b.finalQuestion?.trim() && b.finalAnswer?.trim());
+  const ready = clues > 0 && finalReady;
   return {
     id: b.id,
     title: b.title,
@@ -106,7 +115,8 @@ const boards = rawBoards.map((b, i) => {
     roundTitles,
     plays,
     lastPlayed: timeAgo(stats?.lastPlayed ?? null),
-    status: clues > 0 ? 'ready' : 'draft',
+    finalReady,
+    status: ready ? 'ready' : 'draft',
     accent: ACCENT_COLORS[i % ACCENT_COLORS.length],
     firstRoundCategories: firstCatsByBoard.get(b.id) ?? [],
   };
@@ -614,28 +624,8 @@ const globalLastPlayed = gameStatRows.reduce((best: string | null, g) => {
         <div class="db-launch-title" id="launchTitle">—</div>
       </div>
 
-      <div>
-        <div class="db-field-lbl">MODE</div>
-        <div class="db-mode-grid">
-          <div class="db-mode-opt active" data-mode="solo" id="modeSolo">
-            <div class="db-mode-opt-top">
-              <span class="db-mode-glyph">◯</span>
-              <span class="db-mode-name">SOLO</span>
-            </div>
-            <div class="db-mode-sub">every player for themself</div>
-          </div>
-          <div class="db-mode-opt" data-mode="teams" id="modeTeams">
-            <div class="db-mode-opt-top">
-              <span class="db-mode-glyph">◇</span>
-              <span class="db-mode-name">TEAMS</span>
-            </div>
-            <div class="db-mode-sub" id="teamsSub">3 teams · combined scores</div>
-          </div>
-        </div>
-        <div class="db-num-teams" id="numTeamsWrap" style="margin-top:8px;">
-          <div class="db-field-lbl" style="margin-bottom:4px;">NUMBER OF TEAMS (2–6)</div>
-          <input id="numTeamsInput" type="number" min="2" max="6" value="3" />
-        </div>
+      <div style="font-size: 11px; color: var(--dim); letter-spacing: 0.16em; padding: 10px 12px; background: var(--bg2); border-radius: 8px; line-height: 1.5;">
+        Solo / teams config moved to the lobby — the host can change mode and team count before starting the game.
       </div>
 
       <div>
@@ -761,23 +751,7 @@ function pickRound(idx) {
   });
 }
 
-// ── Mode toggle ──────────────────────────────────────────────────────────────
-document.getElementById('modeSolo').addEventListener('click', () => {
-  selectedMode = 'solo';
-  document.getElementById('modeSolo').classList.add('active');
-  document.getElementById('modeTeams').classList.remove('active');
-  document.getElementById('numTeamsWrap').style.display = 'none';
-});
-document.getElementById('modeTeams').addEventListener('click', () => {
-  selectedMode = 'teams';
-  document.getElementById('modeTeams').classList.add('active');
-  document.getElementById('modeSolo').classList.remove('active');
-  document.getElementById('numTeamsWrap').style.display = 'block';
-});
-document.getElementById('numTeamsInput').addEventListener('input', (e) => {
-  const n = Math.max(2, Math.min(6, Number(e.target.value) || 3));
-  document.getElementById('teamsSub').textContent = `${n} teams · combined scores`;
-});
+// Solo/teams selection moved to the lobby; dashboard always creates games in solo mode.
 
 // ── Preview code ─────────────────────────────────────────────────────────────
 const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -792,11 +766,30 @@ function updateCodePreview() {
 }
 document.getElementById('regenBtn').addEventListener('click', updateCodePreview);
 
+// Make selectBoard globally accessible (Astro inline scripts run in a module-ish scope
+// in some setups; bind explicitly so the inline onclick attributes can find it).
+window.selectBoard = selectBoard;
+window.pickRound = pickRound;
+window.deleteBoard = window.deleteBoard;
+
+// Auto-select first board on page load so the spotlight + Start button populate.
+if (selectedBoardId) selectBoard(selectedBoardId);
+
 // ── Start game ───────────────────────────────────────────────────────────────
 document.getElementById('startBtn').addEventListener('click', async () => {
   if (!selectedBoardId) return;
-  const teamMode = selectedMode === 'teams';
-  const numTeams = teamMode ? Math.max(2, Math.min(6, Number(document.getElementById('numTeamsInput').value) || 3)) : 0;
+  const b = boards.find(x => x.id === selectedBoardId);
+  if (!b) return;
+  if (!b.finalReady) {
+    alert('This board is missing its Final Jeopardy clue. Open the board editor and fill in Final Jeopardy before starting a game.');
+    return;
+  }
+  if ((b.clues || 0) === 0) {
+    alert('This board has no clues. Add at least one round of questions before starting.');
+    return;
+  }
+  const teamMode = false;  // Configurable from the lobby after the game is created
+  const numTeams = 0;
   const startingRound = typeof selectedRound === 'number' ? selectedRound : 0;
   const btn = document.getElementById('startBtn');
   btn.disabled = true; btn.textContent = 'CREATING…';
@@ -807,7 +800,10 @@ document.getElementById('startBtn').addEventListener('click', async () => {
   });
   if (!res.ok) { btn.disabled = false; btn.textContent = '▶ START GAME'; alert('Could not create game'); return; }
   const json = await res.json();
-  location.href = `/game/${json.id}/host`;
+  // Open the host controls in a new tab (or window) so the current tab can
+  // become the presenter view that sits on the shared display.
+  window.open(`/game/${json.id}/host`, '_blank', 'noopener');
+  location.href = `/game/${json.id}`;
 });
 
 // ── New board ────────────────────────────────────────────────────────────────

@@ -28,6 +28,9 @@ export interface BoardData {
   id: number;
   title: string;
   rounds: RoundData[];
+  finalCategory: string;
+  finalQuestion: string;
+  finalAnswer: string;
 }
 
 export interface TeamData {
@@ -42,6 +45,8 @@ export interface ActiveGame {
   boardId: number;
   hostSocketId: string;
   status: 'lobby' | 'active' | 'final_jeopardy' | 'finished';
+  /** epoch ms of the last socket activity for this game; used for idle TTL eviction */
+  lastActivity: number;
   players: Map<string, { displayName: string; score: number; socketId: string; teamId: number | null }>;
   teams: Map<number, TeamData>;
   teamMode: boolean;
@@ -67,6 +72,7 @@ export interface ActiveGame {
     answers: Map<string, string>;
     finalQuestion: string;
     judgments: Map<string, boolean>;
+    revealed: Set<string>;
   } | null;
 }
 
@@ -76,9 +82,22 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 export async function loadBoard(boardId: number): Promise<BoardData> {
-  const boardRows = await db.select({ id: schema.boards.id, title: schema.boards.title })
-    .from(schema.boards).where(eq(schema.boards.id, boardId));
+  const boardRows = await db.select({
+    id: schema.boards.id,
+    title: schema.boards.title,
+    finalCategory: schema.boards.finalCategory,
+    finalQuestion: schema.boards.finalQuestion,
+    finalAnswer: schema.boards.finalAnswer,
+  }).from(schema.boards).where(eq(schema.boards.id, boardId));
   if (!boardRows.length) throw new Error('Board not found');
+
+  const baseBoard = {
+    id: boardRows[0].id,
+    title: boardRows[0].title,
+    finalCategory: boardRows[0].finalCategory ?? '',
+    finalQuestion: boardRows[0].finalQuestion ?? '',
+    finalAnswer: boardRows[0].finalAnswer ?? '',
+  };
 
   const roundRows = await db.select()
     .from(schema.rounds)
@@ -86,7 +105,7 @@ export async function loadBoard(boardId: number): Promise<BoardData> {
     .orderBy(schema.rounds.position);
 
   if (!roundRows.length) {
-    return { id: boardRows[0].id, title: boardRows[0].title, rounds: [] };
+    return { ...baseBoard, rounds: [] };
   }
 
   const roundIds = roundRows.map((r) => r.id);
@@ -117,8 +136,7 @@ export async function loadBoard(boardId: number): Promise<BoardData> {
   }
 
   return {
-    id: boardRows[0].id,
-    title: boardRows[0].title,
+    ...baseBoard,
     rounds: roundRows.map((r) => ({
       id: r.id,
       title: r.title,
@@ -166,6 +184,7 @@ export async function getOrCreateGame(gameId: string): Promise<ActiveGame | null
       boardId: game.boardId,
       hostSocketId: '',
       status: game.status as ActiveGame['status'],
+      lastActivity: Date.now(),
       players: playersMap,
       teams: teamsMap,
       teamMode: !!game.teamMode,
@@ -282,6 +301,30 @@ export async function setGameStatus(gameId: string, status: ActiveGame['status']
 
 export async function persistPlayerScore(gameId: string, playerId: string, score: number) {
   await db.update(schema.players).set({ score }).where(eq(schema.players.id, playerId));
+}
+
+/** Mark a game as active right now (called on every socket message). */
+export function touchGame(gameId: string) {
+  const g = activeGames.get(gameId);
+  if (g) g.lastActivity = Date.now();
+}
+
+/** Remove an in-memory game (DB rows persist). */
+export function removeGame(gameId: string): boolean {
+  return activeGames.delete(gameId);
+}
+
+/** Evict in-memory games whose last activity was longer ago than `idleMs`. */
+export function evictIdleGames(idleMs: number) {
+  const cutoff = Date.now() - idleMs;
+  let evicted = 0;
+  for (const [id, g] of activeGames) {
+    if ((g.lastActivity ?? 0) < cutoff) {
+      activeGames.delete(id);
+      evicted++;
+    }
+  }
+  return evicted;
 }
 
 export async function markQuestionUsed(gameId: string, questionId: number) {

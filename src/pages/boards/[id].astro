@@ -408,10 +408,6 @@ const boardTitle = boards[0].title;
             <span class="opt-row-lbl">Daily Double</span>
             <button id="sbDd" class="toggle"></button>
           </div>
-          <div class="opt-row">
-            <span class="opt-row-lbl">Value ($)</span>
-            <input id="sbValue" class="val-in" type="number" min="0" step="100" />
-          </div>
         </div>
       </div>
 
@@ -429,6 +425,7 @@ const boardTitle = boards[0].title;
   const BID = Number(location.pathname.split('/').pop());
   let board    = null;
   let roundIdx = 0;
+  let viewFinal = false; // when true, edit Final Jeopardy clue instead of a round grid
   let activeQ  = null; // { ci, qi }
   let saveTimer = null;
 
@@ -444,7 +441,6 @@ const boardTitle = boards[0].title;
   const sbNotes  = document.getElementById('sbNotes');
   const sbAliases= document.getElementById('sbAliases');
   const sbDd     = document.getElementById('sbDd');
-  const sbValue  = document.getElementById('sbValue');
   const sbDelete = document.getElementById('sbDelete');
   const sbNext   = document.getElementById('sbNext');
   const saveDot  = document.getElementById('saveDot');
@@ -543,7 +539,8 @@ const boardTitle = boards[0].title;
   // ── Render ─────────────────────────────────────────────────────────────────
   function render() {
     renderTabs();
-    renderGrid();
+    if (viewFinal) renderFinalEditor();
+    else renderGrid();
   }
 
   function renderTabs() {
@@ -555,14 +552,14 @@ const boardTitle = boards[0].title;
       const total = (r.categories || []).length * rows;
 
       const item = document.createElement('div');
-      item.className = 'tab-item' + (i === roundIdx ? ' active' : '');
+      item.className = 'tab-item' + (!viewFinal && i === roundIdx ? ' active' : '');
 
       const btn = document.createElement('button');
       btn.className = 'tab-btn';
       btn.textContent = `${(r.title || 'Round').toUpperCase()}  ${filled}/${total}`;
       btn.addEventListener('click', () => {
         flushSidebar();
-        roundIdx = i; activeQ = null;
+        roundIdx = i; activeQ = null; viewFinal = false;
         render(); showSidebar(false);
       });
       item.appendChild(btn);
@@ -588,10 +585,69 @@ const boardTitle = boards[0].title;
       const n = board.rounds.length + 1;
       board.rounds.push(defaultRound(`Round ${n}`));
       roundIdx = board.rounds.length - 1;
-      activeQ = null;
+      activeQ = null; viewFinal = false;
       render(); showSidebar(false); markDirty();
     });
     tabsEl.appendChild(add);
+
+    // FINAL JEOPARTY tab — always present, separated from rounds
+    const finalDone = !!(board.finalCategory?.trim() && board.finalQuestion?.trim() && board.finalAnswer?.trim());
+    const finalItem = document.createElement('div');
+    finalItem.className = 'tab-item' + (viewFinal ? ' active' : '');
+    finalItem.style.marginLeft = '12px';
+    const finalBtn = document.createElement('button');
+    finalBtn.className = 'tab-btn';
+    finalBtn.style.color = viewFinal ? 'var(--gold)' : (finalDone ? 'var(--ink)' : 'var(--red)');
+    finalBtn.textContent = `FINAL JEOPARTY ${finalDone ? '✓' : '!'}`;
+    finalBtn.title = finalDone ? 'Final Jeopardy is ready' : 'Final Jeopardy is required';
+    finalBtn.addEventListener('click', () => {
+      flushSidebar();
+      viewFinal = true; activeQ = null;
+      render(); showSidebar(false);
+    });
+    finalItem.appendChild(finalBtn);
+    tabsEl.appendChild(finalItem);
+  }
+
+  function renderFinalEditor() {
+    const cat = board.finalCategory || '';
+    const q   = board.finalQuestion || '';
+    const a   = board.finalAnswer || '';
+    gridEl.innerHTML = `
+      <div style="max-width: 760px; margin: 32px auto; display: flex; flex-direction: column; gap: 22px;">
+        <div>
+          <div style="font-family:'Anton',sans-serif; font-size: 36px; color: var(--gold); letter-spacing: 0.04em;">FINAL JEOPARTY</div>
+          <div style="font-size: 12px; color: var(--dim); letter-spacing: 0.18em; margin-top: 4px;">ONE CLUE PER BOARD. REQUIRED.</div>
+        </div>
+        <label style="display: flex; flex-direction: column; gap: 6px;">
+          <span class="small" style="letter-spacing: 0.22em; color: var(--dim);">CATEGORY</span>
+          <input id="fjCat" value="${cat.replace(/"/g, '&quot;')}" placeholder="WORLD CAPITALS"
+            style="font-family:'Anton',sans-serif; font-size: 22px; padding: 14px 16px; background: var(--bg2); border: 2px solid var(--line); border-radius: 12px; color: var(--ink); outline: none; letter-spacing: 0.04em; text-transform: uppercase;" />
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px;">
+          <span class="small" style="letter-spacing: 0.22em; color: var(--dim);">CLUE</span>
+          <textarea id="fjQuestion" placeholder="The clue (host reads this aloud)"
+            style="font-family:'Space Grotesk',sans-serif; font-size: 18px; padding: 14px 16px; background: var(--bg2); border: 2px solid var(--line); border-radius: 12px; color: var(--ink); outline: none; min-height: 130px; resize: vertical;">${q.replace(/</g, '&lt;')}</textarea>
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px;">
+          <span class="small" style="letter-spacing: 0.22em; color: var(--dim);">CORRECT RESPONSE</span>
+          <input id="fjAnswer" value="${a.replace(/"/g, '&quot;')}" placeholder="What is ___?"
+            style="font-family:'Space Grotesk',sans-serif; font-size: 18px; padding: 14px 16px; background: var(--bg2); border: 2px solid var(--line); border-radius: 12px; color: var(--ink); outline: none;" />
+        </label>
+        <p class="small" style="color: var(--dim);">Tip: at game time, players have 30 seconds to type their response and wager between $0 and their current score.</p>
+      </div>
+    `;
+    const onInput = () => {
+      board.finalCategory = document.getElementById('fjCat').value;
+      board.finalQuestion = document.getElementById('fjQuestion').value;
+      board.finalAnswer   = document.getElementById('fjAnswer').value;
+      markDirty();
+      // Update the tab indicator (✓ vs !) without full re-render
+      renderTabs();
+    };
+    document.getElementById('fjCat').addEventListener('input', onInput);
+    document.getElementById('fjQuestion').addEventListener('input', onInput);
+    document.getElementById('fjAnswer').addEventListener('input', onInput);
   }
 
   function renderGrid() {
@@ -969,7 +1025,6 @@ const boardTitle = boards[0].title;
     sbNotes.value        = q.hostNotes || '';
     updateAliases(q.answer);
     sbDd.className       = 'toggle' + (q.isDailyDouble ? ' on' : '');
-    sbValue.value        = q.value ?? '';
   }
 
   function flushSidebar() {
@@ -978,7 +1033,6 @@ const boardTitle = boards[0].title;
     q.question    = sbClue.value;
     q.answer      = sbAnswer.value;
     q.hostNotes   = sbNotes.value;
-    q.value       = Number(sbValue.value) || q.value;
     q.isDailyDouble = sbDd.classList.contains('on');
   }
 
@@ -1018,20 +1072,6 @@ const boardTitle = boards[0].title;
   });
 
   sbNotes.addEventListener('input', () => { const q = getActiveQ(); if (q) q.hostNotes = sbNotes.value; markDirty(); });
-
-  sbValue.addEventListener('input', () => {
-    const q = getActiveQ();
-    if (!q) return;
-    const v = Number(sbValue.value) || 0;
-    q.value = v;
-    sbVal.textContent = `$${v}`;
-    const cells = gridEl.querySelectorAll('.q-cell');
-    const cats = board.rounds[roundIdx]?.categories || [];
-    const idx = activeQ.qi * cats.length + activeQ.ci;
-    const cell = cells[idx];
-    if (cell) { const valEl = cell.querySelector('.q-val'); if (valEl) valEl.textContent = `$${v}`; }
-    markDirty();
-  });
 
   sbDd.addEventListener('click', () => {
     sbDd.classList.toggle('on');

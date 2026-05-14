@@ -3,8 +3,14 @@ import { db, schema, insertReturningId } from '@/lib/db';
 import { eq, inArray, and } from 'drizzle-orm';
 
 async function loadFullBoard(boardId: number) {
-  const boardRows = await db.select({ id: schema.boards.id, hostId: schema.boards.hostId, title: schema.boards.title })
-    .from(schema.boards).where(eq(schema.boards.id, boardId));
+  const boardRows = await db.select({
+    id: schema.boards.id,
+    hostId: schema.boards.hostId,
+    title: schema.boards.title,
+    finalCategory: schema.boards.finalCategory,
+    finalQuestion: schema.boards.finalQuestion,
+    finalAnswer: schema.boards.finalAnswer,
+  }).from(schema.boards).where(eq(schema.boards.id, boardId));
   if (!boardRows.length) return null;
 
   const roundRows = await db.select().from(schema.rounds).where(eq(schema.rounds.boardId, boardId)).orderBy(schema.rounds.position);
@@ -36,6 +42,9 @@ async function loadFullBoard(boardId: number) {
     id: boardRows[0].id,
     hostId: boardRows[0].hostId,
     title: boardRows[0].title,
+    finalCategory: boardRows[0].finalCategory ?? '',
+    finalQuestion: boardRows[0].finalQuestion ?? '',
+    finalAnswer: boardRows[0].finalAnswer ?? '',
     rounds: roundRows.map(r => ({ id: r.id, title: r.title, position: r.position, categories: cByRound.get(r.id) ?? [] })),
   };
 }
@@ -56,7 +65,12 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
     .from(schema.boards).where(eq(schema.boards.id, boardId));
   if (!boardCheck.length || boardCheck[0].hostId !== locals.host.hostId) return new Response('Not found', { status: 404 });
 
-  await db.update(schema.boards).set({ title: String(payload.title || 'Untitled Board') }).where(eq(schema.boards.id, boardId));
+  await db.update(schema.boards).set({
+    title: String(payload.title || 'Untitled Board'),
+    finalCategory: payload.finalCategory ? String(payload.finalCategory) : null,
+    finalQuestion: payload.finalQuestion ? String(payload.finalQuestion) : null,
+    finalAnswer: payload.finalAnswer ? String(payload.finalAnswer) : null,
+  }).where(eq(schema.boards.id, boardId));
 
   const incomingRounds: any[] = Array.isArray(payload.rounds) ? payload.rounds : [];
   const keepRoundIds = incomingRounds.filter(r => r.id).map(r => Number(r.id));

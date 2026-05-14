@@ -1,99 +1,370 @@
 ---
 import '@/styles/global.css';
 // Pre-fill game code from URL param: /join?code=ABCD
-const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
 ---
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Join Game — Jeoparty</title>
+  <style>
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      background-image: radial-gradient(ellipse at 50% 0%, var(--bg3) 0%, var(--bg) 70%);
+    }
+    .join-shell {
+      min-height: 100vh;
+      max-width: 440px;
+      margin: 0 auto;
+      padding: 60px 28px 32px;
+      display: flex;
+      flex-direction: column;
+    }
+    .join-title {
+      font-family: 'Anton', sans-serif;
+      font-size: 56px;
+      color: var(--gold);
+      letter-spacing: 0.02em;
+      line-height: 1;
+      text-align: center;
+    }
+    .join-tagline {
+      font-size: 12px;
+      color: var(--dim);
+      letter-spacing: 0.22em;
+      text-align: center;
+      margin-top: 6px;
+    }
+    .field-label {
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 0.25em;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .code-row { display: flex; gap: 10px; margin-top: 12px; }
+    .code-box {
+      flex: 1;
+      aspect-ratio: 0.85;
+      background: var(--bg2);
+      border: 2px solid var(--gold);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Anton', sans-serif;
+      font-size: 56px;
+      color: var(--ink);
+      cursor: text;
+      user-select: none;
+    }
+    .code-box.empty { color: var(--dim2); }
+    .code-box.focused {
+      box-shadow: 0 0 0 4px rgba(255,200,61,0.18);
+    }
+    /* Hidden input that captures all code keystrokes */
+    .code-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+      width: 1px;
+      height: 1px;
+    }
+    .name-field {
+      margin-top: 12px;
+      background: var(--bg2);
+      border: 2px solid var(--line);
+      border-radius: 14px;
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: border-color 0.15s ease;
+    }
+    .name-field:focus-within { border-color: var(--gold); }
+    .avatar-tile {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: var(--magenta);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; color: #0E0B22; font-weight: 800;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: transform 0.12s ease;
+    }
+    .avatar-tile:active { transform: scale(0.92); }
+    .name-input {
+      font-family: 'Anton', sans-serif;
+      font-size: 26px;
+      letter-spacing: 0.04em;
+      color: var(--ink);
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      padding: 0;
+      text-transform: uppercase;
+    }
+    .name-input::placeholder { color: var(--dim2); }
+    .name-hint {
+      font-size: 11px;
+      color: var(--dim);
+      margin-top: 8px;
+      letter-spacing: 0.04em;
+    }
+    .join-btn {
+      background: var(--gold);
+      color: #0E0B22;
+      font-family: 'Anton', sans-serif;
+      font-size: 28px;
+      letter-spacing: 0.08em;
+      padding: 22px 0;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      width: 100%;
+      box-shadow: 0 14px 0 #B88A1F, 0 22px 40px rgba(255,200,61,0.3);
+      transition: transform 0.08s ease, box-shadow 0.08s ease;
+    }
+    .join-btn:active {
+      transform: translateY(6px);
+      box-shadow: 0 8px 0 #B88A1F, 0 12px 24px rgba(255,200,61,0.25);
+    }
+    .join-btn:disabled {
+      opacity: 0.55; cursor: not-allowed; transform: none;
+      box-shadow: 0 14px 0 #B88A1F, 0 22px 40px rgba(255,200,61,0.2);
+    }
+    .footer-link {
+      margin-top: 18px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--dim);
+      letter-spacing: 0.04em;
+    }
+    .footer-link a {
+      color: var(--gold);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      font-weight: 600;
+    }
+    .err-msg {
+      text-align: center;
+      min-height: 1.2em;
+      font-size: 13px;
+      color: var(--red);
+      margin-top: 12px;
+      letter-spacing: 0.02em;
+    }
+    .grow { flex: 1; min-height: 24px; }
+    .hidden { display: none !important; }
+
+    /* Host card variant */
+    .host-card {
+      margin-top: 36px;
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px 22px;
+    }
+    .host-card h2 {
+      font-family: 'Anton', sans-serif;
+      font-size: 26px;
+      letter-spacing: 0.04em;
+      text-align: center;
+      color: var(--ink);
+    }
+    .host-card p {
+      text-align: center;
+      font-size: 13px;
+      color: var(--dim);
+      margin: 8px 0 18px;
+    }
+    .switch-btn {
+      background: transparent;
+      color: var(--ink);
+      border: 1.5px solid var(--line);
+      font-family: 'Anton', sans-serif;
+      font-size: 14px;
+      letter-spacing: 0.12em;
+      padding: 12px 18px;
+      border-radius: 999px;
+      cursor: pointer;
+      display: block;
+      margin: 14px auto 0;
+    }
+    .switch-btn:hover { border-color: var(--line2); }
+  </style>
 </head>
 <body>
-  <main style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:1.5rem;">
-    <div class="logo" style="font-family:'Anton',sans-serif; font-size:2.5rem; font-weight:700; background:linear-gradient(135deg,#FFC83D,#FF3D8E); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:1.5rem; text-align:center;">JEOPARTY</div>
+  <main class="join-shell">
+    <div class="join-title">JEOPARTY</div>
+    <div class="join-tagline">PARTY · TRIVIA · CHAOS</div>
 
-    <section id="joinCard" class="card grid" style="width:100%; max-width:400px;">
-      <h2 style="text-align:center;">Join a Game</h2>
-
-      <div class="grid">
-        <label>
-          <span class="small">Game Code</span>
-          <input id="gameCode" maxlength="4" placeholder="ABCD" value={code}
-            style="text-transform:uppercase; font-family:'Anton',sans-serif; font-size:2rem; text-align:center; letter-spacing:0.3em; font-weight:700;" />
-        </label>
-        <label>
-          <span class="small">Your Name</span>
-          <input id="displayName" maxlength="64" placeholder="Nickname" autocomplete="nickname" />
-        </label>
-        <button id="joinBtn" class="accent" style="font-size:1.1rem;">Join Game</button>
+    <!-- Player join -->
+    <section id="joinCard">
+      <div style="margin-top: 56px;">
+        <div class="field-label">ROOM CODE</div>
+        <div class="code-row" id="codeRow">
+          <div class="code-box empty" data-idx="0"></div>
+          <div class="code-box empty" data-idx="1"></div>
+          <div class="code-box empty" data-idx="2"></div>
+          <div class="code-box empty" data-idx="3"></div>
+        </div>
+        <input
+          id="gameCode"
+          class="code-input"
+          maxlength="4"
+          autocomplete="off"
+          autocapitalize="characters"
+          inputmode="text"
+          value={code}
+        />
       </div>
 
-      <p id="joinMsg" class="small" style="text-align:center; min-height:1.2em;"></p>
+      <div style="margin-top: 32px;">
+        <div class="field-label">YOUR NAME</div>
+        <div class="name-field">
+          <span id="avatarTile" class="avatar-tile" title="Tap to change color">✦</span>
+          <input
+            id="displayName"
+            class="name-input"
+            maxlength="24"
+            placeholder="YOUR NAME"
+            autocomplete="nickname"
+          />
+        </div>
+        <div class="name-hint">Tap your avatar to change color.</div>
+      </div>
 
-      <div style="border-top:1px solid var(--border); padding-top:0.85rem; text-align:center;">
-        <button id="switchHostBtn" class="secondary" style="font-size:0.88rem; padding:.4rem 1rem;">Join as Host</button>
+      <p id="joinMsg" class="err-msg"></p>
+
+      <div class="grow"></div>
+
+      <button id="joinBtn" class="join-btn">JOIN GAME →</button>
+      <div class="footer-link">
+        Hosting tonight? <a href="#" id="switchHostBtn">Join as host →</a>
       </div>
     </section>
 
-    <!-- Host join flow (hidden initially) -->
-    <section id="hostCard" class="card grid hidden" style="width:100%; max-width:400px;">
-      <h2 style="text-align:center;">Join as Host</h2>
-      <p class="small" style="text-align:center;">Enter the game code, then verify it's your game.</p>
-      <label>
-        <span class="small">Game Code</span>
-        <input id="hostGameCode" maxlength="4" placeholder="ABCD" value={code}
-          style="text-transform:uppercase; font-family:'Anton',sans-serif; font-size:2rem; text-align:center; letter-spacing:0.3em; font-weight:700;" />
-      </label>
-      <button id="hostJoinBtn" class="accent">Open Host Controls</button>
-      <p id="hostMsg" class="small" style="text-align:center; min-height:1.2em;"></p>
-      <div style="border-top:1px solid var(--border); padding-top:0.85rem; text-align:center;">
-        <button id="switchPlayerBtn" class="secondary" style="font-size:0.88rem; padding:.4rem 1rem;">Back to Player Join</button>
-      </div>
-    </section>
+    <!-- Host join -->
+    <section id="hostCard" class="host-card hidden">
+      <h2>JOIN AS HOST</h2>
+      <p>Enter the game code, then verify it's your game.</p>
 
-    <p style="margin-top:1.5rem; font-size:0.85rem; color:var(--muted);">
-      <a href="/">← Back to home</a>
-    </p>
+      <div class="field-label">ROOM CODE</div>
+      <div class="code-row" id="hostCodeRow">
+        <div class="code-box empty" data-idx="0"></div>
+        <div class="code-box empty" data-idx="1"></div>
+        <div class="code-box empty" data-idx="2"></div>
+        <div class="code-box empty" data-idx="3"></div>
+      </div>
+      <input
+        id="hostGameCode"
+        class="code-input"
+        maxlength="4"
+        autocomplete="off"
+        autocapitalize="characters"
+        inputmode="text"
+        value={code}
+      />
+
+      <p id="hostMsg" class="err-msg"></p>
+
+      <button id="hostJoinBtn" class="join-btn" style="margin-top:18px; font-size:22px;">OPEN HOST CONTROLS →</button>
+      <button id="switchPlayerBtn" class="switch-btn">← BACK TO PLAYER JOIN</button>
+    </section>
   </main>
 
   <script is:inline>
     // @ts-nocheck
+    const AVATAR_COLORS = [
+      { name: 'magenta', value: '#FF3D8E', glyph: '✦' },
+      { name: 'gold',    value: '#FFC83D', glyph: '◆' },
+      { name: 'mint',    value: '#5EEBC1', glyph: '●' },
+      { name: 'violet',  value: '#7C5CFF', glyph: '▲' },
+      { name: 'orange',  value: '#FF8A3D', glyph: '◐' },
+      { name: 'blue',    value: '#5BA9FF', glyph: '■' },
+    ];
+
+    /* ── Code box wiring ─────────────────────────────────────────────────── */
+    function wireCodeInput(inputId, rowId) {
+      const input = document.getElementById(inputId);
+      const row = document.getElementById(rowId);
+      const boxes = row.querySelectorAll('.code-box');
+
+      function render() {
+        const val = input.value.toUpperCase();
+        boxes.forEach((box, i) => {
+          const ch = val[i] || '';
+          box.textContent = ch;
+          box.classList.toggle('empty', !ch);
+          box.classList.toggle('focused', i === val.length && document.activeElement === input);
+        });
+        // If full and last is focused, drop focused ring
+        if (val.length === 4) boxes[3].classList.remove('focused');
+      }
+
+      input.addEventListener('input', () => {
+        const pos = input.selectionStart;
+        input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+        input.setSelectionRange(pos, pos);
+        render();
+      });
+      input.addEventListener('focus', render);
+      input.addEventListener('blur', render);
+      row.addEventListener('click', () => { input.focus(); });
+
+      render();
+    }
+
+    wireCodeInput('gameCode', 'codeRow');
+    wireCodeInput('hostGameCode', 'hostCodeRow');
+
+    /* ── Avatar color picker (stored locally) ────────────────────────────── */
+    const avatarTile = document.getElementById('avatarTile');
+    let avatarIdx = 0;
+    try {
+      const saved = localStorage.getItem('jp.avatar');
+      if (saved != null) avatarIdx = Math.max(0, Math.min(AVATAR_COLORS.length - 1, parseInt(saved, 10) || 0));
+    } catch {}
+    function paintAvatar() {
+      const c = AVATAR_COLORS[avatarIdx];
+      avatarTile.style.background = c.value;
+      avatarTile.textContent = c.glyph;
+    }
+    paintAvatar();
+    avatarTile.addEventListener('click', () => {
+      avatarIdx = (avatarIdx + 1) % AVATAR_COLORS.length;
+      paintAvatar();
+      try { localStorage.setItem('jp.avatar', String(avatarIdx)); } catch {}
+    });
+
+    /* ── Switch cards ────────────────────────────────────────────────────── */
     const joinCard = document.getElementById('joinCard');
     const hostCard = document.getElementById('hostCard');
-    const joinMsg  = document.getElementById('joinMsg');
-    const hostMsg  = document.getElementById('hostMsg');
-
-    // Force uppercase on code inputs
-    ['gameCode', 'hostGameCode'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener('input', () => {
-        const pos = el.selectionStart;
-        el.value = el.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
-        el.setSelectionRange(pos, pos);
-      });
-    });
-
-    document.getElementById('switchHostBtn').addEventListener('click', () => {
+    document.getElementById('switchHostBtn').addEventListener('click', (e) => {
+      e.preventDefault();
       joinCard.classList.add('hidden');
       hostCard.classList.remove('hidden');
-      const code = document.getElementById('gameCode').value;
-      document.getElementById('hostGameCode').value = code;
+      document.getElementById('hostGameCode').value = document.getElementById('gameCode').value;
+      document.getElementById('hostGameCode').dispatchEvent(new Event('input'));
     });
-
     document.getElementById('switchPlayerBtn').addEventListener('click', () => {
       hostCard.classList.add('hidden');
       joinCard.classList.remove('hidden');
     });
 
-    // Player join
+    /* ── Player join submit ──────────────────────────────────────────────── */
+    const joinMsg = document.getElementById('joinMsg');
     document.getElementById('joinBtn').addEventListener('click', async () => {
       joinMsg.textContent = '';
       const code = document.getElementById('gameCode').value.trim().toUpperCase();
       const name = document.getElementById('displayName').value.trim();
-      if (code.length !== 4) { joinMsg.textContent = 'Enter a 4-letter game code.'; joinMsg.style.color = 'var(--bad)'; return; }
-      if (!name) { joinMsg.textContent = 'Enter your nickname.'; joinMsg.style.color = 'var(--bad)'; return; }
+      if (code.length !== 4) { joinMsg.textContent = 'Enter a 4-character room code.'; return; }
+      if (!name) { joinMsg.textContent = 'Enter your name.'; return; }
+
+      try { localStorage.setItem('jp.displayName', name); } catch {}
 
       const res = await fetch(`/api/games/${code}/join`, {
         method: 'POST',
@@ -103,37 +374,33 @@ const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         joinMsg.textContent = json.error || 'Could not join game.';
-        joinMsg.style.color = 'var(--bad)';
         return;
       }
       location.href = `/game/${code}/play`;
     });
 
-    // Host join — check if already logged in, otherwise redirect to login
+    /* ── Host join submit ────────────────────────────────────────────────── */
+    const hostMsg = document.getElementById('hostMsg');
     document.getElementById('hostJoinBtn').addEventListener('click', async () => {
       hostMsg.textContent = '';
       const code = document.getElementById('hostGameCode').value.trim().toUpperCase();
-      if (code.length !== 4) { hostMsg.textContent = 'Enter a 4-letter game code.'; hostMsg.style.color = 'var(--bad)'; return; }
+      if (code.length !== 4) { hostMsg.textContent = 'Enter a 4-character room code.'; return; }
 
-      // Check ownership via API
       const res = await fetch(`/api/games/${code}/host-check`);
       if (res.status === 401) {
-        // Not logged in — redirect to login, come back here after
         location.href = `/?next=/game/${code}/host`;
         return;
       }
-      if (res.status === 403) {
-        hostMsg.textContent = 'This game belongs to a different account.';
-        hostMsg.style.color = 'var(--bad)';
-        return;
-      }
-      if (!res.ok) {
-        hostMsg.textContent = 'Game not found.';
-        hostMsg.style.color = 'var(--bad)';
-        return;
-      }
+      if (res.status === 403) { hostMsg.textContent = "This game belongs to a different account."; return; }
+      if (!res.ok) { hostMsg.textContent = 'Game not found.'; return; }
       location.href = `/game/${code}/host`;
     });
+
+    /* ── Pre-fill name from local storage ────────────────────────────────── */
+    try {
+      const savedName = localStorage.getItem('jp.displayName');
+      if (savedName) document.getElementById('displayName').value = savedName;
+    } catch {}
   </script>
 </body>
 </html>

@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import { randomInt, randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { eq } from 'drizzle-orm';
-import { db, schema } from './db';
+import { db, schema, insertReturningId } from './db';
 import {
   boardState,
   getOrCreateGame,
@@ -12,6 +12,9 @@ import {
   teamList,
   setGameStatus,
   currentRoundCategories,
+  touchGame,
+  removeGame,
+  evictIdleGames,
   type ActiveGame,
 } from './gameState';
 import { verifyHostToken, verifyPlayerToken } from './auth';
@@ -41,6 +44,28 @@ function trackTimer(gameId: string, timer: NodeJS.Timeout) {
 function clearGameTimers(gameId: string) {
   for (const t of gameTimers.get(gameId) ?? []) clearTimeout(t);
   gameTimers.set(gameId, []);
+}
+
+// Schedule removal of a finished game from memory after a grace period
+// (long enough for clients to fetch final scores and navigate away).
+const GAME_REMOVAL_GRACE_MS = 60_000;
+const IDLE_TTL_MS = 2 * 60 * 60 * 1000; // 2h
+const IDLE_SWEEP_INTERVAL_MS = 10 * 60 * 1000; // 10 min
+
+function scheduleGameRemoval(gameId: string) {
+  setTimeout(() => {
+    clearGameTimers(gameId);
+    const evicted = removeGame(gameId);
+    if (evicted) console.log(`[WS] Evicted finished game ${gameId} from memory`);
+  }, GAME_REMOVAL_GRACE_MS);
+}
+
+// Single global idle-sweep interval (guarded against double-registration on HMR)
+if (!(globalThis as any)._jeoparty_idle_sweep) {
+  (globalThis as any)._jeoparty_idle_sweep = setInterval(() => {
+    const n = evictIdleGames(IDLE_TTL_MS);
+    if (n > 0) console.log(`[WS] Idle sweep evicted ${n} games`);
+  }, IDLE_SWEEP_INTERVAL_MS);
 }
 
 function send(ws: WebSocket, type: string, payload: Record<string, unknown> = {}) {
@@ -181,35 +206,50 @@ async function judgeAnswer(game: ActiveGame, playerId: string, correct: boolean)
   }
 }
 
-function pickFinalQuestion(game: ActiveGame): string {
-  for (const round of game.board.rounds) {
-    for (const cat of round.categories) {
-      for (const q of cat.questions) {
-        if (!game.usedQuestions.has(q.id)) return q.question;
-      }
-    }
-  }
-  return 'What is: the most important question you\'ve never been asked?';
+function finalJeopardyEligible(game: ActiveGame): string[] {
+  // Only players with a positive score participate in Final Jeopardy.
+  return Array.from(game.players.entries())
+    .filter(([_, p]) => (p.score ?? 0) > 0)
+    .map(([id]) => id);
 }
 
 async function maybeStartFinalPrompt(game: ActiveGame) {
   if (!game.finalJeopardy) return;
-  const allPlayers = Array.from(game.players.keys());
-  const complete = allPlayers.every((id) => game.finalJeopardy?.wagers.has(id));
-  if (!complete) return;
-  broadcast(game, 'FINAL_JEOPARDY_START', { questionText: game.finalJeopardy.finalQuestion });
+  const eligible = finalJeopardyEligible(game);
+  if (!eligible.length) return;
+  const allWagered = eligible.every((id) => game.finalJeopardy?.wagers.has(id));
+  if (!allWagered) return;
+  // All wagers are in — reveal the clue. Players have 30s to answer.
+  broadcast(game, 'FINAL_JEOPARDY_START', {
+    category: game.board.finalCategory,
+    questionText: game.board.finalQuestion,
+  });
   const timer = setTimeout(() => {
     if (!game.finalJeopardy) return;
-    const results = Array.from(game.players.entries()).map(([id, pl]) => ({
+    // Auto-deliver whatever we have to the host for judging
+    sendFinalResultsToHost(game);
+  }, 30000);
+  trackTimer(game.gameId, timer);
+}
+
+function sendFinalResultsToHost(game: ActiveGame) {
+  if (!game.finalJeopardy) return;
+  const eligible = finalJeopardyEligible(game);
+  const results = eligible.map((id) => {
+    const pl = game.players.get(id)!;
+    return {
       playerId: id,
       displayName: pl.displayName,
       wager: game.finalJeopardy?.wagers.get(id) ?? 0,
       answer: game.finalJeopardy?.answers.get(id) ?? '',
-      newScore: pl.score,
-    }));
-    sendToHost(game, 'FINAL_JEOPARDY_REVEAL', { results });
-  }, 30000);
-  trackTimer(game.gameId, timer);
+    };
+  });
+  sendToHost(game, 'FINAL_JEOPARDY_REVEAL', {
+    category: game.board.finalCategory,
+    questionText: game.board.finalQuestion,
+    correctAnswer: game.board.finalAnswer,
+    results,
+  });
 }
 
 export function initWebSockets(server: import('node:http').Server) {
@@ -279,6 +319,7 @@ export function initWebSockets(server: import('node:http').Server) {
     ws.on('message', async (raw) => {
       let data: any;
       try { data = JSON.parse(raw.toString()); } catch { return; }
+      touchGame(gameId);
       const current = await getOrCreateGame(gameId);
       if (!current) return;
 
@@ -360,6 +401,27 @@ export function initWebSockets(server: import('node:http').Server) {
           broadcast(current, 'SCORE_UPDATE', { scores: scoreList(current), teams: teamList(current) });
         }
 
+        if (data.type === 'SET_TEAM_CONFIG' && current.status === 'lobby') {
+          const teamMode = !!data.teamMode;
+          const rawN = Number(data.numTeams);
+          const numTeams = teamMode ? Math.max(2, Math.min(8, Number.isFinite(rawN) ? Math.floor(rawN) : 2)) : 0;
+          current.teamMode = teamMode;
+          await db.update(schema.games).set({ teamMode, numTeams }).where(eq(schema.games.id, gameId));
+          // Sync teams table to match the new config (only allowed while in lobby).
+          const TEAM_NAMES = ['Team A', 'Team B', 'Team C', 'Team D', 'Team E', 'Team F', 'Team G', 'Team H'];
+          // Delete current teams (cascade clears team_id on players via reference; we also un-assign in-memory)
+          await db.delete(schema.teams).where(eq(schema.teams.gameId, gameId));
+          current.teams = new Map();
+          for (const p of current.players.values()) p.teamId = null;
+          await db.update(schema.players).set({ teamId: null }).where(eq(schema.players.gameId, gameId));
+          // Create fresh teams
+          for (let i = 0; i < numTeams; i++) {
+            const teamId = await insertReturningId(schema.teams, { gameId, name: TEAM_NAMES[i] ?? `Team ${i + 1}`, position: i });
+            current.teams.set(teamId, { id: teamId, name: TEAM_NAMES[i] ?? `Team ${i + 1}`, position: i, playerIds: [] });
+          }
+          broadcast(current, 'SYNC_STATE', boardState(current));
+        }
+
         if (data.type === 'MOVE_PLAYER') {
           const playerId = data.playerId as string;
           const teamId = data.teamId != null ? Number(data.teamId) : null;
@@ -393,45 +455,61 @@ export function initWebSockets(server: import('node:http').Server) {
         }
 
         if (data.type === 'START_FINAL_JEOPARDY') {
+          if (!current.board.finalQuestion?.trim()) {
+            sendToHost(current, 'ERROR', { message: 'This board has no Final Jeopardy clue.' });
+            return;
+          }
           await setGameStatus(gameId, 'final_jeopardy');
           current.status = 'final_jeopardy';
           current.finalJeopardy = {
             wagers: new Map(),
             answers: new Map(),
             judgments: new Map(),
-            finalQuestion: pickFinalQuestion(current),
+            finalQuestion: current.board.finalQuestion,
+            revealed: new Set<string>(),
           };
-          broadcast(current, 'START_FINAL_JEOPARDY');
-          const timer = setTimeout(async () => {
-            await maybeStartFinalPrompt(current);
-          }, 60000);
-          trackTimer(gameId, timer);
+          broadcast(current, 'START_FINAL_JEOPARDY', {
+            category: current.board.finalCategory,
+            eligiblePlayerIds: finalJeopardyEligible(current),
+          });
         }
 
         if (data.type === 'JUDGE_FINAL' && current.finalJeopardy) {
+          // Host records a private judgment. Score is applied on REVEAL_FINAL.
           const playerId = data.playerId as string;
           const correct = !!data.correct;
           current.finalJeopardy.judgments.set(playerId, correct);
+          sendToHost(current, 'FINAL_JUDGMENT_ACK', { playerId, correct });
+        }
+
+        if (data.type === 'REVEAL_FINAL_RESPONSE' && current.finalJeopardy) {
+          const playerId = data.playerId as string;
+          if (current.finalJeopardy.revealed.has(playerId)) return;
+          current.finalJeopardy.revealed.add(playerId);
+          const judgment = current.finalJeopardy.judgments.get(playerId);
+          if (judgment === undefined) return; // host must judge before revealing
           const p = current.players.get(playerId);
           const wager = current.finalJeopardy.wagers.get(playerId) ?? 0;
           if (p) {
-            p.score += correct ? wager : -wager;
+            p.score += judgment ? wager : -wager;
             await persistPlayerScore(gameId, playerId, p.score);
           }
-          const allJudged = Array.from(current.players.keys()).every((id) => current.finalJeopardy?.judgments.has(id));
-          if (allJudged) {
-            const results = Array.from(current.players.entries()).map(([id, pl]) => ({
-              playerId: id,
-              displayName: pl.displayName,
-              wager: current.finalJeopardy?.wagers.get(id) ?? 0,
-              answer: current.finalJeopardy?.answers.get(id) ?? '',
-              correct: current.finalJeopardy?.judgments.get(id) ?? false,
-              newScore: pl.score,
-            }));
-            broadcast(current, 'FINAL_JEOPARDY_END', { results });
+          broadcast(current, 'FINAL_RESPONSE_REVEAL', {
+            playerId,
+            displayName: p?.displayName ?? 'Player',
+            answer: current.finalJeopardy.answers.get(playerId) ?? '',
+            wager,
+            correct: judgment,
+            newScore: p?.score ?? 0,
+          });
+          broadcast(current, 'SCORE_UPDATE', { scores: scoreList(current), teams: teamList(current) });
+          const eligible = finalJeopardyEligible(current);
+          const allRevealed = eligible.every((id) => current.finalJeopardy?.revealed.has(id));
+          if (allRevealed) {
             broadcast(current, 'GAME_OVER', { scores: scoreList(current), teams: teamList(current) });
             await setGameStatus(gameId, 'finished');
             current.status = 'finished';
+            scheduleGameRemoval(gameId);
           }
         }
 
@@ -439,6 +517,7 @@ export function initWebSockets(server: import('node:http').Server) {
           await setGameStatus(gameId, 'finished');
           current.status = 'finished';
           broadcast(current, 'GAME_OVER', { scores: scoreList(current), teams: teamList(current) });
+          scheduleGameRemoval(gameId);
         }
       }
 
@@ -480,36 +559,71 @@ export function initWebSockets(server: import('node:http').Server) {
           if (cq.buzzOrder.some((b) => b.playerId === meta.playerId)) return;
           if (cq.buzzOrder.length > 0 && cq.buzzCollectDeadline != null && now > cq.buzzCollectDeadline) return;
           cq.buzzOrder.push({ playerId: meta.playerId, clientTime: t, receivedTime: now });
+
+          // Short-circuit: if every still-eligible player has buzzed, resolve now.
+          const eligibleCount = Array.from(current.players.keys())
+            .filter((id) => !cq.eliminated.has(id)).length;
+          if (cq.buzzOrder.length >= eligibleCount) {
+            void resolveBuzzerWinner(gameId);
+            return;
+          }
+
+          // Otherwise on the first buzz, schedule a short jitter window for any
+          // nearly-simultaneous buzzes that arrived a few ms later.
           if (cq.buzzOrder.length === 1) {
-            cq.buzzCollectDeadline = now + 5000;
-            const timer = setTimeout(() => void resolveBuzzerWinner(gameId), 5000);
+            const WINDOW_MS = 600;
+            cq.buzzCollectDeadline = now + WINDOW_MS;
+            const timer = setTimeout(() => void resolveBuzzerWinner(gameId), WINDOW_MS);
             trackTimer(gameId, timer);
           }
         }
 
         if (data.type === 'DAILY_DOUBLE_WAGER' && current.currentQuestion?.isDailyDouble) {
-          current.currentQuestion.dailyDoubleWager = Number(data.wager);
-          broadcast(current, 'DAILY_DOUBLE_WAGER', { playerId: meta.playerId, wager: Number(data.wager) });
+          // Only the player who picked the Daily Double can wager.
+          if (meta.playerId !== current.currentPicker) return;
+          const player = current.players.get(meta.playerId);
+          if (!player) return;
+          // Wager bounds: min $5, max = greater of (current score, highest
+          // remaining clue value on the board for the current round).
+          const cats = currentRoundCategories(current);
+          let highestRemaining = 0;
+          for (const cat of cats) {
+            for (const q of cat.questions) {
+              if (current.usedQuestions.has(q.id)) continue;
+              if (q.id === current.currentQuestion.questionId) continue;
+              if (q.value > highestRemaining) highestRemaining = q.value;
+            }
+          }
+          const maxWager = Math.max(player.score, highestRemaining);
+          const raw = Number(data.wager);
+          const wager = Math.max(5, Math.min(maxWager, Number.isFinite(raw) ? Math.floor(raw) : 0));
+          current.currentQuestion.dailyDoubleWager = wager;
+          broadcast(current, 'DAILY_DOUBLE_WAGER', { playerId: meta.playerId, wager });
+          // Auto-emit BUZZ_WINNER so the host UI moves into judging mode (no buzzer phase for DD)
+          current.currentQuestion.winnerId = meta.playerId;
+          broadcast(current, 'BUZZ_WINNER', {
+            playerId: meta.playerId,
+            displayName: player.displayName,
+          });
         }
 
         if (data.type === 'FINAL_WAGER' && current.finalJeopardy) {
-          current.finalJeopardy.wagers.set(meta.playerId, Math.max(0, Number(data.wager) || 0));
+          const player = current.players.get(meta.playerId);
+          if (!player || player.score <= 0) return; // not eligible
+          const raw = Math.floor(Number(data.wager));
+          if (!Number.isFinite(raw)) return;
+          const wager = Math.max(0, Math.min(player.score, raw));
+          current.finalJeopardy.wagers.set(meta.playerId, wager);
           await maybeStartFinalPrompt(current);
         }
 
         if (data.type === 'FINAL_ANSWER' && current.finalJeopardy) {
+          const player = current.players.get(meta.playerId);
+          if (!player || player.score <= 0) return;
           current.finalJeopardy.answers.set(meta.playerId, String(data.answer ?? ''));
-          const allAnswered = Array.from(current.players.keys()).every((id) => current.finalJeopardy?.answers.has(id));
-          if (allAnswered) {
-            const results = Array.from(current.players.entries()).map(([id, pl]) => ({
-              playerId: id,
-              displayName: pl.displayName,
-              wager: current.finalJeopardy?.wagers.get(id) ?? 0,
-              answer: current.finalJeopardy?.answers.get(id) ?? '',
-              newScore: pl.score,
-            }));
-            sendToHost(current, 'FINAL_JEOPARDY_REVEAL', { results });
-          }
+          const eligible = finalJeopardyEligible(current);
+          const allAnswered = eligible.every((id) => current.finalJeopardy?.answers.has(id));
+          if (allAnswered) sendFinalResultsToHost(current);
         }
       }
     });

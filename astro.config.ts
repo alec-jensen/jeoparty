@@ -9,6 +9,7 @@ export default defineConfig({
       name: 'jeoparty-ws',
       hooks: {
         'astro:server:setup': async ({ server }) => {
+          await server.ssrLoadModule('./src/lib/db');
           const httpServer = server.httpServer;
           if (httpServer) {
             const mod = await server.ssrLoadModule('./src/lib/ws');
