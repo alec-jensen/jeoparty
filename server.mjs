@@ -24,6 +24,12 @@ function loadDotEnv(path = '.env') {
 
 loadDotEnv();
 
+// The standalone Astro entry auto-starts its own HTTP server unless disabled.
+// We disable it because this file creates and owns the HTTP server instance.
+if (!process.env.ASTRO_NODE_AUTOSTART) {
+  process.env.ASTRO_NODE_AUTOSTART = 'disabled';
+}
+
 const [{ handler }, { initDb }, { initWebSockets }] = await Promise.all([
   import('./dist/server/entry.mjs'),
   import('./src/lib/db.ts'),
