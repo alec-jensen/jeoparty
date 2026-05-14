@@ -17,6 +17,10 @@ export interface IntroController {
   dispose(): void;
 }
 
+interface LogoIdleOptions {
+  canvasExpand?: number;
+}
+
 type Vec = { x: number; y: number; z: number; rx: number; ry: number; s: number; o: number };
 type Keyframe = { t: number; v: Vec };
 
@@ -83,7 +87,11 @@ function sampleKeys(keys: Keyframe[], t: number): Vec {
 }
 
 /** Shows the logo centered and sized to fill the container. No fly-in. */
-export async function createLogoIdle(container: HTMLElement, fontUrl: string): Promise<{ dispose(): void }> {
+export async function createLogoIdle(
+  container: HTMLElement,
+  fontUrl: string,
+  options: LogoIdleOptions = {},
+): Promise<{ dispose(): void }> {
   const font: Font = await new Promise((resolve, reject) => {
     new FontLoader().load(fontUrl, resolve, undefined, reject);
   });
@@ -97,7 +105,7 @@ export async function createLogoIdle(container: HTMLElement, fontUrl: string): P
 
   // Canvas overflows the container by this factor on each side so rotation never clips.
   // e.g. 1.3 = canvas is 30% wider/taller, with 15% extra on every edge.
-  const CANVAS_EXPAND = 1.3;
+  const CANVAS_EXPAND = Math.max(1, options.canvasExpand ?? 1.3);
   const EDGE = (CANVAS_EXPAND - 1) / 2 * 100; // 15 (percent)
 
   const canvas = renderer.domElement;

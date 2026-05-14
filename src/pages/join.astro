@@ -446,7 +446,7 @@ try {
 
       const res = await fetch(`/api/games/${code}/host-check`);
       if (res.status === 401) {
-        location.href = `/?next=/game/${code}/host`;
+        location.href = `/?showLogin=1&next=${encodeURIComponent(`/game/${code}/host`)}`;
         return;
       }
       if (res.status === 403) { hostMsg.textContent = "This game belongs to a different account."; return; }

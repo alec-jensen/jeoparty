@@ -28,4 +28,6 @@
 
 - [ ] run subagents to make sure state recovery fully works for all possible game states (should even survive server restarts, currently does not)
 
-- [ ] for the host login flow on their mobile device, when redirecting to login, use a query param to indicate that the login modal should be shown (currently it just sends them to the homepage, doesnt actually say to login)
+- [x] for the host login flow on their mobile device, when redirecting to login, use a query param to indicate that the login modal should be shown (currently it just sends them to the homepage, doesnt actually say to login)
+
+- [ ] animate the game results at the end of the game, starting from lowest score to highest score, with the winning team/player doing a little dance or something

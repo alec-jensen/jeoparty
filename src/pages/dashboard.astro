@@ -426,21 +426,6 @@ const globalLastPlayed = gameStatRows.reduce((best: string | null, g) => {
       border-radius: 14px; padding: 16px 18px;
       box-shadow: 0 18px 40px rgba(124,92,255,.30), inset 0 -6px 0 rgba(0,0,0,.22);
     }
-    .db-code-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .db-code-lbl { font-size: 10px; color: rgba(255,255,255,.7); letter-spacing: .22em; font-family: 'Anton', sans-serif; margin-bottom: 6px; }
-    .db-code-chars { display: flex; gap: 4px; }
-    .db-code-char {
-      width: 28px; height: 34px; border-radius: 5px;
-      background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.18);
-      display: flex; align-items: center; justify-content: center;
-      font-family: 'Anton', sans-serif; font-size: 20px; color: #fff;
-    }
-    .db-regen-btn {
-      background: rgba(255,255,255,.12); color: #fff;
-      border: 1px solid rgba(255,255,255,.22); padding: 6px 10px;
-      border-radius: 6px; font-size: 14px; cursor: pointer; box-shadow: none;
-    }
-    .db-regen-btn:hover { background: rgba(255,255,255,.2); transform: none; box-shadow: none; }
     .db-start-btn {
       width: 100%; background: var(--gold); color: #0E0B22;
       font-family: 'Anton', sans-serif; font-size: 20px; letter-spacing: .10em;
@@ -656,15 +641,6 @@ const globalLastPlayed = gameStatRows.reduce((best: string | null, g) => {
       </div>
 
       <div class="db-start-card">
-        <div class="db-code-row">
-          <div>
-            <div class="db-code-lbl">NEW ROOM CODE</div>
-            <div class="db-code-chars" id="codeChars">
-              <div class="db-code-char">—</div>
-            </div>
-          </div>
-          <button class="db-regen-btn" id="regenBtn" title="Regenerate code">↻</button>
-        </div>
         <button class="db-start-btn" id="startBtn">▶ START GAME</button>
         <div class="db-start-hint" id="startHint">SELECT A BOARD TO START</div>
       </div>
@@ -728,7 +704,6 @@ function selectBoard(id) {
   // Launch rail
   document.getElementById('launchTitle').textContent = b.title.toUpperCase();
   updateRoundPicker(b);
-  updateCodePreview();
   document.getElementById('startBtn').disabled = false;
   document.getElementById('startHint').textContent = `HOST FROM PHONE · PLAYERS JOIN AT ${location.host}`;
 }
@@ -780,19 +755,6 @@ document.getElementById('optShuffleRow').addEventListener('click', () => {
   optShuffle = !optShuffle;
   renderOption('optShuffleRow', 'optShufflePill', optShuffle);
 });
-
-// ── Preview code ─────────────────────────────────────────────────────────────
-const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-function genCode() { return Array.from({length:4}, () => CHARS[Math.floor(Math.random()*26)]).join(''); }
-let previewCode = genCode();
-function updateCodePreview() {
-  previewCode = genCode();
-  const wrap = document.getElementById('codeChars');
-  wrap.innerHTML = previewCode.split('').map(c =>
-    `<div class="db-code-char">${c}</div>`
-  ).join('');
-}
-document.getElementById('regenBtn').addEventListener('click', updateCodePreview);
 
 // Make selectBoard globally accessible (Astro inline scripts run in a module-ish scope
 // in some setups; bind explicitly so the inline onclick attributes can find it).
@@ -918,7 +880,6 @@ if (boards.length > 0) {
 } else {
   document.getElementById('startBtn').disabled = true;
 }
-updateCodePreview();
 </script>
 
 <script>

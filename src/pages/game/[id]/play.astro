@@ -385,6 +385,109 @@ const initialPlayerId = payload?.playerId ?? '';
     }
     .scores li strong { color: var(--gold); }
 
+    .final-wrap {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .final-champ {
+      background: linear-gradient(160deg, rgba(255, 200, 61, 0.2) 0%, rgba(124, 92, 255, 0.2) 100%);
+      border: 1px solid rgba(255, 200, 61, 0.55);
+      border-radius: 14px;
+      padding: 14px 16px;
+      text-align: center;
+    }
+    .final-champ-name {
+      font-family: 'Anton', sans-serif;
+      font-size: 34px;
+      line-height: 1;
+      letter-spacing: 0.03em;
+      color: var(--gold);
+      text-shadow: 0 0 24px rgba(255, 200, 61, 0.28);
+    }
+    .final-champ-score {
+      margin-top: 6px;
+      font-family: 'Anton', sans-serif;
+      font-size: 22px;
+      line-height: 1;
+      color: var(--ink);
+    }
+    .final-meta {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    .final-list-wrap {
+      flex: 1;
+      min-height: 180px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(18, 13, 46, 0.65);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .final-list-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      font-size: 10px;
+      color: var(--dim);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+    .final-scores {
+      list-style: none;
+      margin: 0;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      min-height: 0;
+    }
+    .final-score-row {
+      display: grid;
+      grid-template-columns: 26px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg2);
+      padding: 9px 10px;
+      font-family: 'Anton', sans-serif;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .final-score-row.me {
+      border-color: var(--mint);
+      box-shadow: 0 0 0 1px rgba(94, 235, 193, 0.25) inset;
+    }
+    .final-rank {
+      color: var(--dim);
+      font-size: 13px;
+      text-align: center;
+    }
+    .final-name {
+      font-size: 15px;
+      color: var(--ink);
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .final-score {
+      font-size: 15px;
+      color: var(--gold);
+      font-variant-numeric: tabular-nums;
+    }
+    .final-score.negative { color: var(--red); }
+
     /* ── Join (inside game) ──────────────────────────────────────── */
     .join-shell-inner {
       flex: 1; display: flex; flex-direction: column;
@@ -587,6 +690,7 @@ const initialPlayerId = payload?.playerId ?? '';
     let boardReady  = true; // false during the GAME_START intro animation
     let boardReadyTimer = null;
     let lockedFromCurrentClue = false; // true after this player buzzes wrong — prevents re-buzz on same clue
+    let gameOverRendered = false;
 
     let gameState = {
       board: null,
@@ -947,29 +1051,47 @@ const initialPlayerId = payload?.playerId ?? '';
     function renderGameOver(winner) {
       hideClue();
       setPhase('lobby');
-      const name = winner ? winner.displayName.toUpperCase() : 'NOBODY';
-      const score = winner ? dollars(winner.score) : '';
+      const items = gameState.teamMode && gameState.teams.length
+        ? gameState.teams.map((t) => ({ id: `team-${t.id}`, name: t.name, score: t.score ?? 0, isMe: false }))
+        : gameState.scores.map((s) => ({ id: s.playerId, name: s.displayName, score: s.score ?? 0, isMe: s.playerId === playerId }));
+      items.sort((a, b) => b.score - a.score);
+
+      const champion = winner
+        ? { name: winner.displayName, score: winner.score }
+        : items[0] || { name: 'Nobody', score: 0 };
+      const myRank = !gameState.teamMode ? items.findIndex((item) => item.id === playerId) + 1 : 0;
+
       phaseRoot.innerHTML = `
-        <div class="lobby-area">
+        <div class="final-wrap">
           <div class="lobby-eyebrow">FINAL SCORES</div>
-          <div class="lobby-title">${name} WINS</div>
-          <div class="lobby-sub">${score}</div>
-          <ul class="scores" id="finalScores"></ul>
+          <div class="final-champ">
+            <div class="final-champ-name">${String(champion.name || 'NOBODY').toUpperCase()}</div>
+            <div class="final-champ-score">${dollars(champion.score || 0)}</div>
+            <div class="final-meta">${myRank > 0 ? `Your Place: #${myRank}` : `${items.length} TOTAL`}</div>
+          </div>
+          <div class="final-list-wrap">
+            <div class="final-list-head">Standings</div>
+            <ul class="final-scores" id="finalScores"></ul>
+          </div>
           <button id="returnHomeBtn" class="join-btn" style="margin-top: 24px; font-size: 22px; padding: 16px 28px; width: auto;">← BACK TO HOME</button>
         </div>
       `;
+
       const list = document.getElementById('finalScores');
-      const items = gameState.teamMode && gameState.teams.length
-        ? gameState.teams.map((t) => ({ name: t.name, score: t.score }))
-        : gameState.scores.map((s) => ({ name: s.displayName, score: s.score }));
-      items.sort((a, b) => b.score - a.score).forEach((item) => {
+      items.forEach((item, idx) => {
         const li = document.createElement('li');
-        li.innerHTML = `<span>${item.name}</span><strong>${dollars(item.score)}</strong>`;
+        li.className = `final-score-row${item.isMe ? ' me' : ''}`;
+        li.innerHTML = `
+          <span class="final-rank">${idx + 1}</span>
+          <span class="final-name">${item.name}</span>
+          <strong class="final-score${item.score < 0 ? ' negative' : ''}">${dollars(item.score)}</strong>
+        `;
         list.appendChild(li);
       });
       document.getElementById('returnHomeBtn')?.addEventListener('click', () => {
         location.href = '/';
       });
+      gameOverRendered = true;
       setFooter('Thanks for playing!', { color: 'var(--gold)' });
     }
 
@@ -1283,12 +1405,19 @@ const initialPlayerId = payload?.playerId ?? '';
 
       if (gameState.status === 'lobby') renderLobby();
       else if (gameState.status === 'active') {
+        gameOverRendered = false;
         if (!boardReady) renderIntroWaiting();
         else if (isMyTurn) renderBoardPicker();
         else renderWaitingForPicker();
       } else if (gameState.status === 'final_jeopardy') {
+        gameOverRendered = false;
         // Server will drive the wager/answer phase via explicit messages
         if (phase !== 'lobby') renderWaiting('Final Jeopardy — watch the screen.');
+      } else if (gameState.status === 'finished') {
+        if (!gameOverRendered) {
+          const winner = [...gameState.scores].sort((a, b) => b.score - a.score)[0];
+          renderGameOver(winner);
+        }
       }
     }
 

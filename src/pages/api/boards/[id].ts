@@ -135,6 +135,17 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
 
 export const DELETE: APIRoute = async ({ params, locals }) => {
   if (!locals.host) return new Response('Unauthorized', { status: 401 });
-  await db.delete(schema.boards).where(and(eq(schema.boards.id, Number(params.id)), eq(schema.boards.hostId, locals.host.hostId)));
+  const boardId = Number(params.id);
+
+  const boardRows = await db.select({ id: schema.boards.id })
+    .from(schema.boards)
+    .where(and(eq(schema.boards.id, boardId), eq(schema.boards.hostId, locals.host.hostId)));
+  if (!boardRows.length) return new Response('Not found', { status: 404 });
+
+  // Delete games first so FK references from games/used_questions do not block
+  // board deletion in SQLite.
+  await db.delete(schema.games).where(eq(schema.games.boardId, boardId));
+  await db.delete(schema.boards).where(eq(schema.boards.id, boardId));
+
   return new Response(JSON.stringify({ ok: true }), { status: 200 });
 };

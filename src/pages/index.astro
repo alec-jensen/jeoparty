@@ -506,6 +506,7 @@ const ACCENT_COLORS = ['var(--gold)', 'var(--magenta)', 'var(--mint)', 'var(--vi
   // @ts-nocheck
   const params = new URLSearchParams(location.search);
   const nextUrl = params.get('next') || '/dashboard';
+  const shouldShowLogin = params.get('showLogin') === '1';
 
   // Code boxes
   const codeInput = document.getElementById('codeInput');
@@ -551,6 +552,10 @@ const ACCENT_COLORS = ['var(--gold)', 'var(--magenta)', 'var(--mint)', 'var(--vi
   document.getElementById('openAuthBtn2')?.addEventListener('click', openModal);
   document.getElementById('closeAuthBtn')?.addEventListener('click', closeModal);
   modal?.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  if (shouldShowLogin) {
+    openModal();
+  }
 
   // Modal tabs
   document.querySelectorAll('.hp-modal-tab').forEach(tab => {

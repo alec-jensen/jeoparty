@@ -24,7 +24,17 @@ export async function requireHost(context: APIContext) {
 export async function runAuth(context: APIContext) {
   if (!requiresHost(context.url.pathname)) return null;
   const host = await requireHost(context);
-  if (!host) return Response.redirect(new URL('/', context.url), 302);
+  if (!host) {
+    const loginUrl = new URL('/', context.url);
+    loginUrl.searchParams.set('showLogin', '1');
+
+    const nextPath = `${context.url.pathname}${context.url.search}`;
+    if (nextPath && nextPath !== '/') {
+      loginUrl.searchParams.set('next', nextPath);
+    }
+
+    return Response.redirect(loginUrl, 302);
+  }
   context.locals.host = { hostId: host.hostId, email: host.email, tokenId: host.tokenId };
   return null;
 }
