@@ -58,6 +58,11 @@ export const games = sqliteTable('games', {
   status: text('status').notNull().default('lobby'),
   currentPickerId: text('current_picker_id'),
   currentRound: integer('current_round').default(0),
+  optDailyDoubles: integer('opt_daily_doubles', { mode: 'boolean' }).default(true),
+  optSoundEffects: integer('opt_sound_effects', { mode: 'boolean' }).default(true),
+  optShuffle: integer('opt_shuffle', { mode: 'boolean' }).default(false),
+  currentQuestionJson: text('current_question_json'),
+  finalJeopardyJson: text('final_jeopardy_json'),
   createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });
 
@@ -75,6 +80,8 @@ export const players = sqliteTable('players', {
   displayName: text('display_name').notNull(),
   score: integer('score').default(0),
   socketId: text('socket_id'),
+  avatarColor: integer('avatar_color').default(0),
+  avatarShape: integer('avatar_shape').default(0),
 });
 
 export const usedQuestions = sqliteTable('used_questions', {

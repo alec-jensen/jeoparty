@@ -460,7 +460,9 @@ const globalLastPlayed = gameStatRows.reduce((best: string | null, g) => {
   <!-- ── Top bar ──────────────────────────────────────────────── -->
   <header class="db-top">
     <div class="db-top-left">
-      <a href="/" class="db-brand">JEOPARTY</a>
+      <a href="/" class="db-brand" style="display:flex;align-items:center;gap:8px;text-decoration:none;">
+        <div id="dashLogoContainer" style="position:relative;width:200px;height:52px;" aria-hidden="true"></div>
+      </a>
       <span class="db-badge">HOST DASHBOARD</span>
     </div>
     <div class="db-search">
@@ -638,21 +640,17 @@ const globalLastPlayed = gameStatRows.reduce((best: string | null, g) => {
       <div>
         <div class="db-field-lbl">OPTIONS</div>
         <div class="db-opt-rows">
-          <div class="db-opt-row">
+          <div class="db-opt-row" id="optDailyDoublesRow" style="cursor:pointer;" title="Click to toggle">
             <span>Daily Doubles</span>
-            <span class="db-tag-pill" style="color:var(--mint);border:1px solid rgba(94,235,193,.33)">ON</span>
+            <span class="db-tag-pill" id="optDailyDoublesPill" style="color:var(--mint);border:1px solid rgba(94,235,193,.33)">ON</span>
           </div>
-          <div class="db-opt-row">
-            <span>Per-clue timer</span>
-            <span class="db-tag-pill" style="color:var(--gold);border:1px solid rgba(255,200,61,.33)">20s</span>
-          </div>
-          <div class="db-opt-row">
+          <div class="db-opt-row" id="optSoundEffectsRow" style="cursor:pointer;" title="Click to toggle">
             <span>Sound effects</span>
-            <span class="db-tag-pill" style="color:var(--mint);border:1px solid rgba(94,235,193,.33)">ON</span>
+            <span class="db-tag-pill" id="optSoundEffectsPill" style="color:var(--mint);border:1px solid rgba(94,235,193,.33)">ON</span>
           </div>
-          <div class="db-opt-row">
+          <div class="db-opt-row" id="optShuffleRow" style="cursor:pointer;" title="Click to toggle">
             <span>Shuffle categories</span>
-            <span class="db-tag-pill" style="color:var(--dim2);border:1px solid rgba(107,99,145,.33)">OFF</span>
+            <span class="db-tag-pill" id="optShufflePill" style="color:var(--dim2);border:1px solid rgba(107,99,145,.33)">OFF</span>
           </div>
         </div>
       </div>
@@ -753,6 +751,36 @@ function pickRound(idx) {
 
 // Solo/teams selection moved to the lobby; dashboard always creates games in solo mode.
 
+// ── Game options toggles ──────────────────────────────────────────────────────
+let optDailyDoubles = true;
+let optSoundEffects = true;
+let optShuffle = false;
+function renderOption(rowId, pillId, value) {
+  document.getElementById(rowId).style.opacity = value ? '1' : '0.6';
+  const pill = document.getElementById(pillId);
+  if (value) {
+    pill.textContent = 'ON';
+    pill.style.color = 'var(--mint)';
+    pill.style.border = '1px solid rgba(94,235,193,.33)';
+  } else {
+    pill.textContent = 'OFF';
+    pill.style.color = 'var(--dim2)';
+    pill.style.border = '1px solid rgba(107,99,145,.33)';
+  }
+}
+document.getElementById('optDailyDoublesRow').addEventListener('click', () => {
+  optDailyDoubles = !optDailyDoubles;
+  renderOption('optDailyDoublesRow', 'optDailyDoublesPill', optDailyDoubles);
+});
+document.getElementById('optSoundEffectsRow').addEventListener('click', () => {
+  optSoundEffects = !optSoundEffects;
+  renderOption('optSoundEffectsRow', 'optSoundEffectsPill', optSoundEffects);
+});
+document.getElementById('optShuffleRow').addEventListener('click', () => {
+  optShuffle = !optShuffle;
+  renderOption('optShuffleRow', 'optShufflePill', optShuffle);
+});
+
 // ── Preview code ─────────────────────────────────────────────────────────────
 const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 function genCode() { return Array.from({length:4}, () => CHARS[Math.floor(Math.random()*26)]).join(''); }
@@ -796,7 +824,7 @@ document.getElementById('startBtn').addEventListener('click', async () => {
   const res = await fetch('/api/games/create', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ boardId: selectedBoardId, teamMode, numTeams, startingRound }),
+    body: JSON.stringify({ boardId: selectedBoardId, teamMode, numTeams, startingRound, optDailyDoubles, optSoundEffects, optShuffle }),
   });
   if (!res.ok) { btn.disabled = false; btn.textContent = '▶ START GAME'; alert('Could not create game'); return; }
   const json = await res.json();
@@ -891,6 +919,14 @@ if (boards.length > 0) {
   document.getElementById('startBtn').disabled = true;
 }
 updateCodePreview();
+</script>
+
+<script>
+  import { createLogoIdle } from '@/scripts/intro-3d';
+  const container = document.getElementById('dashLogoContainer');
+  if (container) {
+    createLogoIdle(container, '/fonts/Anton.typeface.json').catch(() => {});
+  }
 </script>
 </body>
 </html>

@@ -463,7 +463,7 @@ const initialPlayerId = payload?.playerId ?? '';
 
     <!-- ── JOIN ────────────────────────────────────────────────── -->
     <div id="joinView" class={`join-shell-inner ${isJoined ? 'hidden' : ''}`}>
-      <div class="join-title">JEOPARTY</div>
+      <div id="playJoinLogo" style="position:relative;height:80px;width:100%;" aria-hidden="true"></div>
       <div class="join-tagline">PARTY · TRIVIA · CHAOS</div>
 
       <div style="margin-top: 48px;">
@@ -586,6 +586,7 @@ const initialPlayerId = payload?.playerId ?? '';
     let activeClue  = null; // { category, value }
     let boardReady  = true; // false during the GAME_START intro animation
     let boardReadyTimer = null;
+    let lockedFromCurrentClue = false; // true after this player buzzes wrong — prevents re-buzz on same clue
 
     let gameState = {
       board: null,
@@ -776,6 +777,77 @@ const initialPlayerId = payload?.playerId ?? '';
         </div>
       `;
       setFooter('Intro playing…', { color: 'var(--gold)', pulse: true });
+    }
+
+    function renderTeamNaming(msg) {
+      hideClue();
+      setPhase('lobby');
+      const phase = msg.phase;
+      const teams = msg.teams || [];
+      const myTeam = teams.find(t => t.playerIds && t.playerIds.includes(playerId));
+      const secsLeft = msg.deadline ? Math.max(0, Math.round((msg.deadline - Date.now()) / 1000)) : 0;
+
+      if (phase === 'suggesting') {
+        phaseRoot.innerHTML = `
+          <div class="phase-status">
+            <div class="phase-eyebrow">TEAM NAME</div>
+            <div class="phase-headline">${myTeam ? myTeam.teamName : 'Name your team'}</div>
+          </div>
+          <div class="input-area" style="margin-top: 16px;">
+            <div class="small">${secsLeft}s to suggest a name</div>
+            <input id="teamNameInput" placeholder="TEAM NAME" maxlength="32" style="text-transform: uppercase;" />
+            <button id="submitTeamName">SUGGEST →</button>
+          </div>
+        `;
+        document.getElementById('submitTeamName').addEventListener('click', () => {
+          const name = (document.getElementById('teamNameInput').value || '').trim();
+          if (!name) return;
+          ws.send(JSON.stringify({ type: 'SUGGEST_TEAM_NAME', suggestion: name }));
+          phaseRoot.querySelector('.small').textContent = 'Suggestion submitted! Waiting for others…';
+          document.getElementById('submitTeamName').disabled = true;
+        });
+      } else {
+        // voting phase
+        const myTeamSuggestions = myTeam?.suggestions || [];
+        phaseRoot.innerHTML = `
+          <div class="phase-status">
+            <div class="phase-eyebrow">VOTE FOR YOUR TEAM NAME</div>
+            <div class="phase-headline">${myTeam ? myTeam.teamName : 'Vote!'}</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px; padding: 0 16px; margin-top: 12px;">
+            ${myTeamSuggestions.map(s => `
+              <button class="vote-btn" data-suggestion="${s.replace(/"/g, '&quot;')}" style="padding: 14px 20px; background: var(--bg2); border: 1.5px solid var(--line); border-radius: 12px; font-family: 'Anton', sans-serif; font-size: 18px; color: var(--ink); letter-spacing: 0.04em; cursor: pointer; text-transform: uppercase;">${s}</button>
+            `).join('')}
+            ${myTeamSuggestions.length === 0 ? '<div class="small" style="text-align:center;color:var(--dim);">Waiting for suggestions…</div>' : ''}
+          </div>
+          <div class="small" style="text-align:center;color:var(--dim);margin-top:8px;">${secsLeft}s remaining</div>
+        `;
+        phaseRoot.querySelectorAll('.vote-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const teamId = myTeam?.teamId;
+            ws.send(JSON.stringify({ type: 'VOTE_TEAM_NAME', teamId, suggestion: btn.dataset.suggestion }));
+            phaseRoot.querySelectorAll('.vote-btn').forEach(b => {
+              b.style.opacity = b === btn ? '1' : '0.4';
+              b.style.borderColor = b === btn ? 'var(--gold)' : 'var(--line)';
+              b.disabled = true;
+            });
+          });
+        });
+      }
+      setFooter('Naming your team…', { color: 'var(--gold)', pulse: true });
+    }
+
+    function renderTeamNamingDone() {
+      hideClue();
+      setPhase('lobby');
+      phaseRoot.innerHTML = `
+        <div class="lobby-area">
+          <div class="lobby-eyebrow">TEAM NAMES SET!</div>
+          <div class="lobby-title">GET READY</div>
+          <div class="lobby-sub">Game starting soon…</div>
+        </div>
+      `;
+      setFooter('Game starting…', { color: 'var(--mint)', pulse: true });
     }
 
     function armBoardReadyTimer(readyAt) {
@@ -1030,8 +1102,11 @@ const initialPlayerId = payload?.playerId ?? '';
         }
 
         if (msg.type === 'BUZZER_OPEN') {
-          canBuzz = true;
-          renderBuzzer();
+          if (!lockedFromCurrentClue) {
+            canBuzz = true;
+            renderBuzzer();
+          }
+          // If this player was eliminated (wrong answer), don't re-enable their buzzer
         }
 
         if (msg.type === 'BUZZ_WINNER') {
@@ -1047,8 +1122,13 @@ const initialPlayerId = payload?.playerId ?? '';
           if (msg.playerId === playerId) {
             const prev = myScoreEntry()?.score ?? 0;
             const delta = msg.newScore - prev;
-            if (msg.correct) renderCorrect(delta);
-            else renderWrong(delta);
+            if (msg.correct) {
+              lockedFromCurrentClue = false;
+              renderCorrect(delta);
+            } else {
+              lockedFromCurrentClue = true;
+              renderWrong(delta);
+            }
           }
           const s = gameState.scores.find((s) => s.playerId === msg.playerId);
           if (s) s.score = msg.newScore;
@@ -1057,9 +1137,31 @@ const initialPlayerId = payload?.playerId ?? '';
 
         if (msg.type === 'QUESTION_CLOSED') {
           canBuzz = false;
+          lockedFromCurrentClue = false;
           hideClue();
           isMyTurn = !!(playerId && gameState.currentPicker === playerId);
           if (isMyTurn) renderBoardPicker(); else renderWaitingForPicker();
+        }
+
+        if (msg.type === 'AVATAR_TAKEN') {
+          // Server rejected avatar change — inform the player
+          setFooter('That avatar is taken. Try another.', { color: 'var(--red)' });
+          setTimeout(() => setFooter(`Connected · room ${gameId}`, { color: 'var(--mint)' }), 3000);
+        }
+
+        if (msg.type === 'TEAM_NAMING_START') {
+          renderTeamNaming(msg);
+        }
+
+        if (msg.type === 'TEAM_NAMES_FINAL') {
+          // Update team names in local state and transition back to lobby wait
+          if (Array.isArray(msg.teams)) {
+            msg.teams.forEach(t => {
+              const entry = gameState.teams.find(gt => gt.id === t.teamId);
+              if (entry) entry.name = t.name;
+            });
+          }
+          renderTeamNamingDone();
         }
 
         if (msg.type === 'START_FINAL_JEOPARDY') {
@@ -1200,7 +1302,7 @@ const initialPlayerId = payload?.playerId ?? '';
       const res = await fetch(`/api/games/${gameId}/join`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ displayName: name }),
+        body: JSON.stringify({ displayName: name, avatarColor: avatarIdx, avatarShape: 0 }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -1210,6 +1312,8 @@ const initialPlayerId = payload?.playerId ?? '';
       const json = await res.json();
       playerToken = json.token;
       playerId = json.playerId;
+      // Server may reassign avatar to avoid conflicts
+      if (json.avatarColor != null) { avatarIdx = json.avatarColor; applyAvatar(hdrAvatar); }
       joinView.classList.add('hidden');
       gameView.classList.remove('hidden');
       phone.dataset.phase = 'lobby';
@@ -1227,6 +1331,14 @@ const initialPlayerId = payload?.playerId ?? '';
     if (isJoined) {
       renderLobby();
       connect();
+    }
+  </script>
+
+  <script>
+    import { createLogoIdle } from '@/scripts/intro-3d';
+    const container = document.getElementById('playJoinLogo');
+    if (container) {
+      createLogoIdle(container, '/fonts/Anton.typeface.json').catch(() => {});
     }
   </script>
 </body>

@@ -488,6 +488,17 @@ select option { background: var(--bg2); }
   margin-top: 2px;
 }
 
+/* ── Presenter player card size tiers ──────────────────────────────────────── */
+.presenter-player-card.pp-md { padding: 9px 12px; gap: 10px; border-radius: 8px; }
+.presenter-player-card.pp-md .presenter-player-avatar { width: 34px; height: 34px; font-size: 17px; border-radius: 7px; }
+.presenter-player-card.pp-md .presenter-player-name   { font-size: 15px; }
+.presenter-player-card.pp-md .presenter-player-score  { font-size: 20px; }
+
+.presenter-player-card.pp-sm { padding: 6px 9px; gap: 8px; border-radius: 7px; }
+.presenter-player-card.pp-sm .presenter-player-avatar { width: 26px; height: 26px; font-size: 13px; border-radius: 5px; }
+.presenter-player-card.pp-sm .presenter-player-name   { font-size: 12px; }
+.presenter-player-card.pp-sm .presenter-player-score  { font-size: 16px; }
+
 /* ── Scrollbars ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

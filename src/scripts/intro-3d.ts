@@ -82,6 +82,139 @@ function sampleKeys(keys: Keyframe[], t: number): Vec {
   return keys[keys.length - 1]!.v;
 }
 
+/** Shows the logo centered and sized to fill the container. No fly-in. */
+export async function createLogoIdle(container: HTMLElement, fontUrl: string): Promise<{ dispose(): void }> {
+  const font: Font = await new Promise((resolve, reject) => {
+    new FontLoader().load(fontUrl, resolve, undefined, reject);
+  });
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  renderer.setClearColor(0x000000, 0);
+
+  // Canvas overflows the container by this factor on each side so rotation never clips.
+  // e.g. 1.3 = canvas is 30% wider/taller, with 15% extra on every edge.
+  const CANVAS_EXPAND = 1.3;
+  const EDGE = (CANVAS_EXPAND - 1) / 2 * 100; // 15 (percent)
+
+  const canvas = renderer.domElement;
+  Object.assign(canvas.style, {
+    position: 'absolute',
+    left: `-${EDGE}%`, top: `-${EDGE}%`,
+    width: `${CANVAS_EXPAND * 100}%`, height: `${CANVAS_EXPAND * 100}%`,
+    zIndex: '2', pointerEvents: 'none',
+  });
+  container.style.overflow = 'visible';
+  container.appendChild(canvas);
+
+  const scene = new THREE.Scene();
+  const CAM_Z = 900;
+  const FOV = 45;
+  const camera = new THREE.PerspectiveCamera(FOV, 1, 1, 8000);
+  camera.position.set(0, 0, CAM_Z);
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+  scene.add(new THREE.AmbientLight(0xffe6b0, 0.35));
+  const keyLight = new THREE.DirectionalLight(0xfff2c8, 1.2);
+  keyLight.position.set(400, 600, 800);
+  scene.add(keyLight);
+  const fillLight = new THREE.DirectionalLight(0xff8a3d, 0.5);
+  fillLight.position.set(-600, -200, 400);
+  scene.add(fillLight);
+  const rimLight = new THREE.PointLight(0xffffff, 2.5, 2000, 1.5);
+  rimLight.position.set(0, 0, 300);
+  scene.add(rimLight);
+
+  const geometry = new TextGeometry('JEOPARTY', {
+    font,
+    size: 120,
+    depth: 36,
+    curveSegments: 24,
+    bevelEnabled: true,
+    bevelThickness: 6,
+    bevelSize: 3,
+    bevelOffset: 0,
+    bevelSegments: 5,
+  });
+  geometry.computeBoundingBox();
+  const bb = geometry.boundingBox!;
+  geometry.translate(-(bb.max.x + bb.min.x) / 2, -(bb.max.y + bb.min.y) / 2, -(bb.max.z + bb.min.z) / 2);
+  const textHalfWidth = (bb.max.x - bb.min.x) / 2;
+
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffc83d,
+    metalness: 0.92,
+    roughness: 0.22,
+    emissive: 0x331c00,
+    emissiveIntensity: 0.35,
+    transparent: true,
+  });
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.visible = true;
+  scene.add(mesh);
+
+  // Visible world half-height at z=0 for this camera
+  const HALF_HEIGHT = CAM_Z * Math.tan((FOV / 2) * (Math.PI / 180));
+  let idleScale = 1;
+
+  function resize() {
+    const cw = container.clientWidth || window.innerWidth;
+    const ch = container.clientHeight || window.innerHeight;
+    // Render into the expanded canvas
+    renderer.setSize(Math.round(cw * CANVAS_EXPAND), Math.round(ch * CANVAS_EXPAND), false);
+    // Aspect ratio is the same (CANVAS_EXPAND cancels), so the world framing is identical
+    camera.aspect = cw / ch;
+    camera.updateProjectionMatrix();
+    // Text should fill 88% of the CONTAINER width. Since the canvas is CANVAS_EXPAND wider,
+    // divide the fill fraction by CANVAS_EXPAND so pixel size stays the same.
+    const visibleHalfWidth = HALF_HEIGHT * camera.aspect;
+    idleScale = (visibleHalfWidth * 0.88 / CANVAS_EXPAND) / textHalfWidth;
+  }
+  resize();
+  const onResize = () => resize();
+  window.addEventListener('resize', onResize);
+
+  let disposed = false;
+  let rafId = 0;
+  const startTime = performance.now();
+
+  function tick() {
+    if (disposed) return;
+    const elapsed = (performance.now() - startTime) / 1000;
+    rimLight.position.set(
+      Math.cos(elapsed * 1.3) * 700,
+      Math.sin(elapsed * 1.7) * 400,
+      300 + Math.sin(elapsed * 0.9) * 200,
+    );
+    mesh.position.set(0, Math.sin(elapsed * 0.7) * 4 * idleScale, 0);
+    mesh.rotation.set(0, THREE.MathUtils.degToRad(Math.sin(elapsed * 0.45) * 10), 0);
+    mesh.scale.setScalar(idleScale);
+    material.opacity = 1;
+    renderer.render(scene, camera);
+    rafId = requestAnimationFrame(tick);
+  }
+  rafId = requestAnimationFrame(tick);
+
+  return {
+    dispose() {
+      disposed = true;
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', onResize);
+      geometry.dispose();
+      material.dispose();
+      pmrem.dispose();
+      renderer.dispose();
+      canvas.remove();
+    },
+  };
+}
+
 export async function createIntro(container: HTMLElement, fontUrl: string): Promise<IntroController> {
   const font: Font = await new Promise((resolve, reject) => {
     new FontLoader().load(fontUrl, resolve, undefined, reject);

@@ -40,6 +40,15 @@ export interface TeamData {
   playerIds: string[];
 }
 
+export interface PlayerData {
+  displayName: string;
+  score: number;
+  socketId: string;
+  teamId: number | null;
+  avatarColor: number;
+  avatarShape: number;
+}
+
 export interface ActiveGame {
   gameId: string;
   boardId: number;
@@ -52,9 +61,14 @@ export interface ActiveGame {
    * Null when not during the intro. Players can't pick clues until this passes.
    */
   boardReadyAt: number | null;
-  players: Map<string, { displayName: string; score: number; socketId: string; teamId: number | null }>;
+  players: Map<string, PlayerData>;
   teams: Map<number, TeamData>;
   teamMode: boolean;
+  options: {
+    dailyDoubles: boolean;
+    soundEffects: boolean;
+    shuffle: boolean;
+  };
   board: BoardData;
   usedQuestions: Set<number>;
   currentPicker: string | null;
@@ -78,6 +92,16 @@ export interface ActiveGame {
     finalQuestion: string;
     judgments: Map<string, boolean>;
     revealed: Set<string>;
+  } | null;
+  /** Team name suggestion/voting state — only present during naming phase */
+  teamNaming: {
+    phase: 'suggesting' | 'voting';
+    /** teamId → Map<playerId, suggestion> */
+    suggestions: Map<number, Map<string, string>>;
+    /** teamId → Map<playerId, voted-suggestion> */
+    votes: Map<number, Map<string, string>>;
+    deadline: number;
+    timer: ReturnType<typeof setTimeout> | null;
   } | null;
 }
 
@@ -171,16 +195,29 @@ export async function getOrCreateGame(gameId: string): Promise<ActiveGame | null
       teamsMap.set(t.id, { id: t.id, name: t.name, position: t.position, playerIds: [] });
     }
 
-    const playersMap = new Map<string, { displayName: string; score: number; socketId: string; teamId: number | null }>();
+    const playersMap = new Map<string, PlayerData>();
     for (const p of playerRows) {
       playersMap.set(p.id, {
         displayName: p.displayName,
         score: p.score ?? 0,
         socketId: p.socketId ?? '',
         teamId: p.teamId ?? null,
+        avatarColor: (p as any).avatarColor ?? 0,
+        avatarShape: (p as any).avatarShape ?? 0,
       });
       if (p.teamId != null) {
         teamsMap.get(p.teamId)?.playerIds.push(p.id);
+      }
+    }
+
+    // Apply shuffle if option is set
+    const optShuffle = !!(game as any).optShuffle;
+    if (optShuffle) {
+      for (const round of board.rounds) {
+        for (let i = round.categories.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [round.categories[i], round.categories[j]] = [round.categories[j]!, round.categories[i]!];
+        }
       }
     }
 
@@ -194,12 +231,18 @@ export async function getOrCreateGame(gameId: string): Promise<ActiveGame | null
       players: playersMap,
       teams: teamsMap,
       teamMode: !!game.teamMode,
+      options: {
+        dailyDoubles: (game as any).optDailyDoubles !== false,
+        soundEffects: (game as any).optSoundEffects !== false,
+        shuffle: optShuffle,
+      },
       board,
       usedQuestions: new Set(usedRows.map((u) => u.questionId)),
       currentPicker: game.currentPickerId ?? null,
       currentRound: game.currentRound ?? 0,
-      currentQuestion: null,
-      finalJeopardy: null,
+      currentQuestion: restoreCurrentQuestion(game.currentQuestionJson ?? null),
+      finalJeopardy: restoreFinalJeopardy(game.finalJeopardyJson ?? null),
+      teamNaming: null,
     };
     activeGames.set(gameId, active);
   } else {
@@ -215,6 +258,8 @@ export async function getOrCreateGame(gameId: string): Promise<ActiveGame | null
           score: p.score ?? 0,
           socketId: p.socketId ?? '',
           teamId: p.teamId ?? null,
+          avatarColor: (p as any).avatarColor ?? 0,
+          avatarShape: (p as any).avatarShape ?? 0,
         });
         if (p.teamId != null) {
           const t = active.teams.get(p.teamId);
@@ -226,6 +271,8 @@ export async function getOrCreateGame(gameId: string): Promise<ActiveGame | null
         existing.displayName = p.displayName;
         existing.score = p.score ?? 0;
         existing.teamId = p.teamId ?? null;
+        existing.avatarColor = (p as any).avatarColor ?? existing.avatarColor ?? 0;
+        existing.avatarShape = (p as any).avatarShape ?? existing.avatarShape ?? 0;
       }
     }
   }
@@ -253,6 +300,8 @@ export async function refreshGameFromDb(gameId: string): Promise<ActiveGame | nu
       score: p.score ?? 0,
       socketId: p.socketId ?? '',
       teamId: p.teamId ?? null,
+      avatarColor: (p as any).avatarColor ?? 0,
+      avatarShape: (p as any).avatarShape ?? 0,
     });
     if (p.teamId != null) {
       const t = active.teams.get(p.teamId);
@@ -280,7 +329,7 @@ export function getGame(gameId: string) {
   return activeGames.get(gameId);
 }
 
-export async function addPlayerToGame(gameId: string, player: { id: string, displayName: string, score?: number, teamId?: number | null }) {
+export async function addPlayerToGame(gameId: string, player: { id: string, displayName: string, score?: number, teamId?: number | null, avatarColor?: number, avatarShape?: number }) {
   const g = activeGames.get(gameId);
   if (!g) return;
   g.players.set(player.id, {
@@ -288,6 +337,8 @@ export async function addPlayerToGame(gameId: string, player: { id: string, disp
     score: player.score ?? 0,
     socketId: '',
     teamId: player.teamId ?? null,
+    avatarColor: player.avatarColor ?? 0,
+    avatarShape: player.avatarShape ?? 0,
   });
   if (player.teamId != null) {
     const t = g.teams.get(player.teamId);
@@ -361,6 +412,8 @@ export function scoreList(game: ActiveGame) {
     displayName: p.displayName,
     score: p.score,
     teamId: p.teamId,
+    avatarColor: p.avatarColor,
+    avatarShape: p.avatarShape,
   }));
 
   if (!game.teamMode) return list;
@@ -396,6 +449,64 @@ export function teamList(game: ActiveGame) {
   }));
 }
 
+/** Serialize currentQuestion to DB (null clears it). Buzzer timing fields are omitted — ephemeral. */
+export async function persistCurrentQuestion(gameId: string, cq: ActiveGame['currentQuestion']) {
+  const json = cq ? JSON.stringify({
+    questionId: cq.questionId,
+    value: cq.value,
+    isDailyDouble: cq.isDailyDouble,
+    dailyDoubleWager: cq.dailyDoubleWager,
+    winnerId: cq.winnerId,
+    eliminated: Array.from(cq.eliminated),
+  }) : null;
+  await db.update(schema.games).set({ currentQuestionJson: json } as any).where(eq(schema.games.id, gameId));
+}
+
+/** Serialize finalJeopardy to DB (null clears it). */
+export async function persistFinalJeopardy(gameId: string, fj: ActiveGame['finalJeopardy']) {
+  const json = fj ? JSON.stringify({
+    finalQuestion: fj.finalQuestion,
+    wagers: Object.fromEntries(fj.wagers),
+    answers: Object.fromEntries(fj.answers),
+    judgments: Object.fromEntries(fj.judgments),
+    revealed: Array.from(fj.revealed),
+  }) : null;
+  await db.update(schema.games).set({ finalJeopardyJson: json } as any).where(eq(schema.games.id, gameId));
+}
+
+function restoreCurrentQuestion(json: string | null): ActiveGame['currentQuestion'] {
+  if (!json) return null;
+  try {
+    const d = JSON.parse(json);
+    return {
+      questionId: d.questionId,
+      value: d.value,
+      isDailyDouble: !!d.isDailyDouble,
+      buzzerOpen: false,
+      serverBuzzerOpenTime: null,
+      buzzCollectDeadline: null,
+      buzzOrder: [],
+      eliminated: new Set(d.eliminated ?? []),
+      ...(d.dailyDoubleWager != null ? { dailyDoubleWager: d.dailyDoubleWager } : {}),
+      ...(d.winnerId !== undefined ? { winnerId: d.winnerId } : {}),
+    };
+  } catch { return null; }
+}
+
+function restoreFinalJeopardy(json: string | null): ActiveGame['finalJeopardy'] {
+  if (!json) return null;
+  try {
+    const d = JSON.parse(json);
+    return {
+      finalQuestion: d.finalQuestion ?? '',
+      wagers: new Map(Object.entries(d.wagers ?? {})),
+      answers: new Map(Object.entries(d.answers ?? {})),
+      judgments: new Map(Object.entries(d.judgments ?? {})),
+      revealed: new Set(d.revealed ?? []),
+    };
+  } catch { return null; }
+}
+
 export function currentRoundCategories(game: ActiveGame) {
   return game.board.rounds[game.currentRound]?.categories ?? [];
 }
@@ -429,8 +540,10 @@ export function boardState(game: ActiveGame) {
     scores: scoreList(game),
     teams: teamList(game),
     currentPicker: game.currentPicker,
+    currentRound: game.currentRound,
     totalRounds: game.board.rounds.length,
     teamMode: game.teamMode,
+    options: game.options,
     boardReadyAt: game.boardReadyAt,
     serverTime: Date.now(),
     status: game.status,

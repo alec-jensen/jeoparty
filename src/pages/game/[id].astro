@@ -140,13 +140,49 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       letter-spacing: 0.06em;
       text-shadow: 0 0 30px currentColor;
     }
+    /* Entry from right, exit left */
     @keyframes player-intro-slide {
-      0%   { opacity: 0; transform: translate(60%, -50%) rotate(6deg) scale(0.85); }
+      0%   { opacity: 0; transform: translate(160%, -50%) rotate(6deg) scale(0.85); }
       15%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1.04); }
       25%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
       80%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
-      100% { opacity: 0; transform: translate(-170%, -50%) rotate(-6deg) scale(0.85); }
+      100% { opacity: 0; transform: translate(-260%, -50%) rotate(-6deg) scale(0.85); }
     }
+    /* Entry from left, exit right */
+    @keyframes player-intro-from-left {
+      0%   { opacity: 0; transform: translate(-260%, -50%) rotate(-6deg) scale(0.85); }
+      15%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1.04); }
+      25%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      80%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      100% { opacity: 0; transform: translate(160%, -50%) rotate(6deg) scale(0.85); }
+    }
+    /* Entry from bottom, exit top */
+    @keyframes player-intro-from-bottom {
+      0%   { opacity: 0; transform: translate(-50%, 150%) rotate(4deg) scale(0.85); }
+      15%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1.04); }
+      25%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      80%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -250%) rotate(-4deg) scale(0.85); }
+    }
+    /* Entry from top, exit bottom */
+    @keyframes player-intro-from-top {
+      0%   { opacity: 0; transform: translate(-50%, -250%) rotate(-4deg) scale(0.85); }
+      15%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1.04); }
+      25%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      80%  { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, 150%) rotate(4deg) scale(0.85); }
+    }
+
+    /* Compact card sizes for multi-column slots */
+    .player-intro-card.pi-sm .pi-avatar { width: 150px; height: 150px; border-radius: 24px; font-size: 6rem; }
+    .player-intro-card.pi-sm .pi-name   { font-size: 4.5rem; }
+    .player-intro-card.pi-sm .pi-score  { font-size: 2rem; }
+    .player-intro-card.pi-sm .pi-eyebrow { font-size: 1.1rem; }
+
+    .player-intro-card.pi-xs .pi-avatar { width: 110px; height: 110px; border-radius: 18px; font-size: 4.5rem; }
+    .player-intro-card.pi-xs .pi-name   { font-size: 3.2rem; }
+    .player-intro-card.pi-xs .pi-score  { font-size: 1.5rem; }
+    .player-intro-card.pi-xs .pi-eyebrow { font-size: 0.9rem; }
 
     /* ── Board fill animation ─────────────────────────────────────────── */
     @keyframes cell-fill-in {
@@ -167,7 +203,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
 
     <!-- Lobby screen (before game starts) -->
     <div id="lobbyScreen" style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2rem;">
-      <div style="font-family:'Anton',sans-serif; font-size:7rem; font-weight:700; background:linear-gradient(135deg,#FFC83D,#FF3D8E); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; line-height:1;">JEOPARTY</div>
+      <div id="lobbyLogoContainer" style="position:relative; width:80vw; max-width:1100px; height:220px;" aria-hidden="true"></div>
       <div class="join-code">{gameId}</div>
       <p style="font-family:'Anton',sans-serif; font-size:1.6rem; color:var(--muted);">Go to <strong style="color:var(--text);">{Astro.url.host}/join</strong> and enter the code above</p>
       <div set:html={qrSvg} style="width:220px; height:220px;" />
@@ -178,8 +214,8 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     <div id="gameScreen" class="hidden" style="height:100%; display:flex; flex-direction:column;">
       <!-- Top bar -->
       <div style="display:flex; align-items:center; justify-content:space-between; padding:32px 56px 24px; flex-shrink:0;">
-        <div style="display:flex; align-items:baseline; gap:18px;">
-          <span style="font-family:'Anton',sans-serif; font-size:56px; letter-spacing:0.02em; color:var(--gold); line-height:1;">JEOPARTY</span>
+        <div style="display:flex; align-items:center; gap:18px;">
+          <div id="gameLogoContainer" style="position:relative; width:300px; height:68px;" aria-hidden="true"></div>
           <span style="font-size:18px; color:var(--dim); letter-spacing:0.18em;">ROOM · {gameId}</span>
         </div>
         <div style="display:flex; align-items:center; gap:28px;">
@@ -211,10 +247,6 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       <div id="roundNotifTitle" style="font-family:'Anton',sans-serif;font-size:6rem;font-weight:700;color:var(--accent);"></div>
     </div>
 
-    <!-- Host controls link (corner) -->
-    <a href={`/game/${gameId}/host`} style="position:absolute;top:16px;right:16px;font-size:0.8rem;color:var(--muted);opacity:0.4;" title="Host Controls">⚙ Host</a>
-    <div id="conn-status">CONNECTING...</div>
-
     <!-- Audio unlock gate -->
     <div id="audioGate" class="hidden">
       <div class="gate-inner">
@@ -228,10 +260,22 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
   </div>
 
   <script>
-    import { createIntro } from '@/scripts/intro-3d';
+    import { createIntro, createLogoIdle } from '@/scripts/intro-3d';
     // Expose to the inline script below so it can mount the Three.js intro
     (window as any).__createJeopartyIntro = (container: HTMLElement) =>
       createIntro(container, '/fonts/Anton.typeface.json');
+
+    const fontUrl = '/fonts/Anton.typeface.json';
+
+    // Lobby hero logo (large, centered)
+    const lobbyEl = document.getElementById('lobbyLogoContainer');
+    let lobbyLogoCtrl: { dispose(): void } | null = null;
+    if (lobbyEl) createLogoIdle(lobbyEl, fontUrl).then(c => { lobbyLogoCtrl = c; }).catch(() => {});
+    (window as any).__disposeLobbyLogo = () => { lobbyLogoCtrl?.dispose(); lobbyLogoCtrl = null; };
+
+    // Game header logo (small, persistent)
+    const gameLogoEl = document.getElementById('gameLogoContainer');
+    if (gameLogoEl) createLogoIdle(gameLogoEl, fontUrl).catch(() => {});
   </script>
 
   <script is:inline define:vars={{ gameId }}>
@@ -282,6 +326,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       audio[k] = a;
     }
     let audioEnabled = false;
+    let soundEffectsEnabled = true; // updated from GAME_START message
     let awaitingIntro = false;
     let crossfading = false;
     let pendingBoardReveal = false;
@@ -289,7 +334,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     let introController = null; // Three.js intro controller, lazy-loaded
 
     function playSound(name) {
-      if (!audioEnabled) return;
+      if (!audioEnabled || !soundEffectsEnabled) return;
       const a = audio[name]; if (!a) return;
       try { a.currentTime = 0; a.volume = SOUNDS[name].volume; a.play().catch(() => {}); } catch {}
     }
@@ -430,6 +475,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       }
 
       if (msg.type === 'GAME_START') {
+        if (msg.soundEffects === false) soundEffectsEnabled = false;
         startIntroSequence();
       }
 
@@ -560,6 +606,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       schedule(() => {
         lobbyScreen.classList.add('hidden');
         lobbyScreen.classList.remove('crossfade-out');
+        if (window.__disposeLobbyLogo) window.__disposeLobbyLogo();
       }, 1200);
 
       gameScreen.classList.add('hidden');
@@ -577,11 +624,19 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
 
       // Window available for player intros = total − fly-in − settle − fly-out − safety
       const playerWindow = Math.max(0, introDurMs - FLY_IN_MS - SETTLE_MS - FLY_OUT_MS - 300);
-      const perPlayer = players.length > 0
-        ? Math.min(2500, Math.floor(playerWindow / players.length))
-        : 0;
+
+      // Compute simultaneous columns so each slot is visible for ≥1500ms
+      const MIN_SLOT_MS = 1500;
+      const MAX_COLS = 5;
+      const maxSlotsInWindow = Math.max(1, Math.floor(playerWindow / MIN_SLOT_MS));
+      const columns = players.length > 0
+        ? Math.min(MAX_COLS, Math.max(1, Math.ceil(players.length / maxSlotsInWindow)))
+        : 1;
+      const numSlots = players.length > 0 ? Math.ceil(players.length / columns) : 0;
+      const perSlot = numSlots > 0 ? Math.min(2500, Math.floor(playerWindow / numSlots)) : 0;
+
       const playerStart = FLY_IN_MS + SETTLE_MS + 200;
-      const playerEnd = playerStart + players.length * perPlayer;
+      const playerEnd = playerStart + numSlots * perSlot;
       const flyOutStart = Math.max(playerEnd + 100, introDurMs - FLY_OUT_MS);
 
       // Mount Three.js intro
@@ -593,10 +648,15 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         }
       }
 
-      // Schedule player intros below the logo
-      players.forEach((p, i) => {
-        schedule(() => showPlayerIntro(p, i + 1, players.length, perPlayer), playerStart + i * perPlayer);
-      });
+      // Schedule player intro slots — each slot shows `columns` cards simultaneously
+      for (let slot = 0; slot < numSlots; slot++) {
+        const slotStart = slot * columns;
+        const slotPlayers = players.slice(slotStart, slotStart + columns);
+        schedule(
+          () => showPlayerSlot(slotPlayers, slotStart, players.length, perSlot, columns),
+          playerStart + slot * perSlot
+        );
+      }
 
       if (audioEnabled) {
         fadeOutSound('theme', 1500);
@@ -633,24 +693,52 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       return id;
     }
 
-    function showPlayerIntro(player, idx, total, durationMs) {
+    // Column positions and entry animations per column count
+    const SLOT_X = {
+      1: ['50%'],
+      2: ['25%', '75%'],
+      3: ['17%', '50%', '83%'],
+      4: ['13%', '37%', '63%', '87%'],
+      5: ['10%', '28%', '50%', '72%', '90%'],
+    };
+    // Each column flies in from a distinct direction; outer cols from sides, inner from top/bottom
+    const SLOT_ANIM = {
+      1: ['player-intro-slide'],
+      2: ['player-intro-from-left', 'player-intro-slide'],
+      3: ['player-intro-from-left', 'player-intro-from-bottom', 'player-intro-slide'],
+      4: ['player-intro-from-left', 'player-intro-from-bottom', 'player-intro-from-top', 'player-intro-slide'],
+      5: ['player-intro-from-left', 'player-intro-from-bottom', 'player-intro-from-top', 'player-intro-from-bottom', 'player-intro-slide'],
+    };
+
+    function showPlayerSlot(slotPlayers, startIdx, total, durationMs, numCols) {
       const flash = document.getElementById('jpFlash');
       if (!flash || flash.classList.contains('hidden')) return;
-      const color = PLAYER_COLORS[(idx - 1) % PLAYER_COLORS.length];
-      const initial = (player.displayName || '?')[0].toUpperCase();
-      const score = player.score || 0;
-      const scoreStr = score < 0 ? `-$${Math.abs(score).toLocaleString()}` : `$${score.toLocaleString()}`;
-      const card = document.createElement('div');
-      card.className = 'player-intro-card';
-      card.style.animation = `player-intro-slide ${durationMs}ms ease-out forwards`;
-      card.innerHTML = `
-        <div class="pi-eyebrow">Player ${idx} of ${total}</div>
-        <div class="pi-avatar" style="background:${color}">${initial}</div>
-        <div class="pi-name">${player.displayName || '—'}</div>
-        <div class="pi-score" style="color:${color}">${scoreStr}</div>
-      `;
-      flash.appendChild(card);
-      schedule(() => card.remove(), durationMs + 60);
+      // Clear any leftover cards from the previous slot
+      flash.querySelectorAll('.player-intro-card').forEach(c => c.remove());
+
+      const actualCols = slotPlayers.length;
+      const xPos  = SLOT_X[actualCols]  || SLOT_X[1];
+      const anims = SLOT_ANIM[actualCols] || SLOT_ANIM[1];
+      const sizeClass = numCols >= 5 ? 'pi-xs' : numCols >= 3 ? 'pi-sm' : '';
+
+      slotPlayers.forEach((player, col) => {
+        const idx = startIdx + col + 1;
+        const color = PLAYER_COLORS[(idx - 1) % PLAYER_COLORS.length];
+        const initial = (player.displayName || '?')[0].toUpperCase();
+        const score = player.score || 0;
+        const scoreStr = score < 0 ? `-$${Math.abs(score).toLocaleString()}` : `$${score.toLocaleString()}`;
+        const card = document.createElement('div');
+        card.className = 'player-intro-card' + (sizeClass ? ' ' + sizeClass : '');
+        card.style.left = xPos[col] || '50%';
+        card.style.animation = `${anims[col] || 'player-intro-slide'} ${durationMs}ms ease-out forwards`;
+        card.innerHTML = `
+          <div class="pi-eyebrow">Player ${idx} of ${total}</div>
+          <div class="pi-avatar" style="background:${color}">${initial}</div>
+          <div class="pi-name">${player.displayName || '—'}</div>
+          <div class="pi-score" style="color:${color}">${scoreStr}</div>
+        `;
+        flash.appendChild(card);
+      });
     }
 
     function finishIntroAndRevealBoard() {
@@ -834,8 +922,15 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       presenterScores.innerHTML = '';
       playerColorMap = {};
       const players = [...gameState.scores].sort((a, b) => b.score - a.score);
-      const cols = Math.min(Math.max(players.length, 1), 6);
+      const count = players.length;
+      // Always fit in ≤2 rows: >6 players → 2 rows, else 1 row
+      const rows = count > 6 ? 2 : 1;
+      const cols = Math.ceil(count / rows);
       presenterScores.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      // Scale down cards as columns increase to stay within the scores strip height
+      const sizeCls = cols <= 6 ? '' : cols <= 9 ? 'pp-md' : 'pp-sm';
+      presenterScores.style.gap = sizeCls === 'pp-sm' ? '6px' : sizeCls === 'pp-md' ? '9px' : '14px';
+      presenterScores.style.padding = sizeCls === 'pp-sm' ? '12px 40px 20px' : sizeCls === 'pp-md' ? '14px 48px 24px' : '20px 56px 32px';
       players.forEach((p, i) => {
         const color = PLAYER_COLORS[i % PLAYER_COLORS.length];
         playerColorMap[p.displayName] = color;
@@ -843,7 +938,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         const scoreColor = p.score < 0 ? 'var(--red)' : 'var(--gold)';
         const scoreStr = p.score < 0 ? `-$${Math.abs(p.score).toLocaleString()}` : `$${p.score.toLocaleString()}`;
         const card = document.createElement('div');
-        card.className = 'presenter-player-card';
+        card.className = `presenter-player-card${sizeCls ? ' ' + sizeCls : ''}`;
         card.style.borderColor = 'transparent';
         card.dataset.player = p.displayName;
         card.innerHTML = `

@@ -59,6 +59,11 @@ export const games = mysqlTable('games', {
   status: varchar('status', { length: 20 }).notNull().default('lobby'),
   currentPickerId: varchar('current_picker_id', { length: 36 }),
   currentRound: int('current_round').default(0),
+  optDailyDoubles: boolean('opt_daily_doubles').default(true),
+  optSoundEffects: boolean('opt_sound_effects').default(true),
+  optShuffle: boolean('opt_shuffle').default(false),
+  currentQuestionJson: text('current_question_json'),
+  finalJeopardyJson: text('final_jeopardy_json'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
@@ -76,6 +81,8 @@ export const players = mysqlTable('players', {
   displayName: varchar('display_name', { length: 64 }).notNull(),
   score: int('score').default(0),
   socketId: varchar('socket_id', { length: 255 }),
+  avatarColor: int('avatar_color').default(0),
+  avatarShape: int('avatar_shape').default(0),
 });
 
 export const usedQuestions = mysqlTable('used_questions', {

@@ -19,7 +19,7 @@ async function uniqueCode(): Promise<string> {
 
 export const POST: APIRoute = async ({ request, locals }) => {
   if (!locals.host) return new Response('Unauthorized', { status: 401 });
-  const { boardId, teamMode, numTeams } = await request.json();
+  const { boardId, teamMode, numTeams, optDailyDoubles, optSoundEffects, optShuffle } = await request.json();
 
   const boardRows = await db.select({ id: schema.boards.id }).from(schema.boards)
     .where(eq(schema.boards.id, Number(boardId)));
@@ -39,7 +39,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
     numTeams: teamMode ? Math.max(2, Number(numTeams) || 2) : 0,
     status: 'lobby',
     currentRound: 0,
-  });
+    optDailyDoubles: optDailyDoubles !== false,
+    optSoundEffects: optSoundEffects !== false,
+    optShuffle: !!optShuffle,
+  } as any);
 
   // Create team rows if team mode is on
   if (teamMode && numTeams > 1) {

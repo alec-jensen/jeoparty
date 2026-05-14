@@ -8,6 +8,8 @@ import {
   getOrCreateGame,
   markQuestionUsed,
   persistPlayerScore,
+  persistCurrentQuestion,
+  persistFinalJeopardy,
   scoreList,
   teamList,
   setGameStatus,
@@ -137,6 +139,7 @@ async function closeQuestion(game: ActiveGame) {
   game.usedQuestions.add(questionId);
   await markQuestionUsed(game.gameId, questionId);
   game.currentQuestion = null;
+  void persistCurrentQuestion(game.gameId, null);
   broadcast(game, 'QUESTION_CLOSED');
   console.log(`[WS] Question closed: ${questionId}`);
   broadcast(game, 'BOARD_STATE', boardState(game));
@@ -161,6 +164,7 @@ async function resolveBuzzerWinner(gameId: string) {
   }
   cq.buzzerOpen = false;
   cq.winnerId = winner.playerId;
+  void persistCurrentQuestion(game.gameId, cq);
   broadcast(game, 'BUZZER_LOCKED');
   const player = game.players.get(winner.playerId);
   const openAt = cq.serverBuzzerOpenTime ?? winner.clientTime;
@@ -210,6 +214,7 @@ async function judgeAnswer(game: ActiveGame, playerId: string, correct: boolean)
   }
 
   current.eliminated.add(playerId);
+  void persistCurrentQuestion(game.gameId, current);
   const alive = Array.from(game.players.keys()).filter((id) => !current.eliminated.has(id));
   if (!alive.length) {
     await closeQuestion(game);
@@ -262,6 +267,116 @@ function sendFinalResultsToHost(game: ActiveGame) {
     correctAnswer: game.board.finalAnswer,
     results,
   });
+}
+
+const INTRO_MS = 26000;
+
+function doGameStart(game: ActiveGame, gameId: string) {
+  game.boardReadyAt = Date.now() + INTRO_MS;
+  broadcast(game, 'GAME_START', { boardReadyAt: game.boardReadyAt, soundEffects: game.options.soundEffects });
+  broadcast(game, 'BOARD_STATE', boardState(game));
+  const timer = setTimeout(() => {
+    const g = (globalThis as any)._jeoparty_games?.get(gameId) ?? game;
+    if (g) g.boardReadyAt = null;
+    broadcast(game, 'BOARD_READY');
+  }, INTRO_MS);
+  trackTimer(gameId, timer);
+}
+
+const NAMING_SUGGEST_MS = 25000;
+const NAMING_VOTE_MS = 20000;
+
+function startTeamNaming(game: ActiveGame) {
+  game.teamNaming = {
+    phase: 'suggesting',
+    suggestions: new Map(),
+    votes: new Map(),
+    deadline: Date.now() + NAMING_SUGGEST_MS,
+    timer: null,
+  };
+  const teams = Array.from(game.teams.values()).map((t) => ({
+    teamId: t.id,
+    teamName: t.name,
+    playerIds: t.playerIds,
+  }));
+  broadcast(game, 'TEAM_NAMING_START', { phase: 'suggesting', teams, deadline: game.teamNaming.deadline });
+  const timer = setTimeout(() => {
+    if (!game.teamNaming || game.teamNaming.phase !== 'suggesting') return;
+    advanceToVoting(game, game.gameId);
+  }, NAMING_SUGGEST_MS);
+  game.teamNaming.timer = timer;
+  trackTimer(game.gameId, timer);
+}
+
+function checkAllTeamsSuggested(game: ActiveGame): boolean {
+  if (!game.teamNaming) return false;
+  for (const [teamId, team] of game.teams) {
+    if (!team.playerIds.length) continue;
+    const suggestions = game.teamNaming.suggestions.get(teamId);
+    if (!suggestions) return false;
+    if (!team.playerIds.every((pid) => suggestions.has(pid))) return false;
+  }
+  return true;
+}
+
+function advanceToVoting(game: ActiveGame, gameId: string) {
+  if (!game.teamNaming) return;
+  if (game.teamNaming.timer) clearTimeout(game.teamNaming.timer);
+  // Collect unique suggestions per team
+  const teamsWithSuggestions = Array.from(game.teams.values()).map((t) => {
+    const sMap = game.teamNaming!.suggestions.get(t.id) ?? new Map<string, string>();
+    const unique = [...new Set(Array.from(sMap.values()))];
+    return { teamId: t.id, teamName: t.name, suggestions: unique.length ? unique : [t.name], playerIds: t.playerIds };
+  });
+  game.teamNaming.phase = 'voting';
+  game.teamNaming.deadline = Date.now() + NAMING_VOTE_MS;
+  broadcast(game, 'TEAM_NAMING_START', { phase: 'voting', teams: teamsWithSuggestions, deadline: game.teamNaming.deadline });
+  const timer = setTimeout(() => {
+    if (!game.teamNaming || game.teamNaming.phase !== 'voting') return;
+    finalizeTeamNames(game, gameId);
+  }, NAMING_VOTE_MS);
+  game.teamNaming.timer = timer;
+  trackTimer(gameId, timer);
+}
+
+function checkAllTeamsVoted(game: ActiveGame): boolean {
+  if (!game.teamNaming) return false;
+  for (const [teamId, team] of game.teams) {
+    if (!team.playerIds.length) continue;
+    const votes = game.teamNaming.votes.get(teamId);
+    if (!votes) return false;
+    if (!team.playerIds.every((pid) => votes.has(pid))) return false;
+  }
+  return true;
+}
+
+async function finalizeTeamNames(game: ActiveGame, gameId: string) {
+  if (!game.teamNaming) return;
+  if (game.teamNaming.timer) clearTimeout(game.teamNaming.timer);
+  // Tally votes per team and pick winners
+  const results: { teamId: number; name: string }[] = [];
+  for (const [teamId, team] of game.teams) {
+    const votes = game.teamNaming.votes.get(teamId);
+    const suggestions = game.teamNaming.suggestions.get(teamId);
+    let winner = team.name;
+    if (votes && votes.size > 0) {
+      const tally = new Map<string, number>();
+      for (const v of votes.values()) tally.set(v, (tally.get(v) ?? 0) + 1);
+      const max = Math.max(...tally.values());
+      const topVotes = [...tally.entries()].filter(([, c]) => c === max).map(([n]) => n);
+      winner = topVotes[Math.floor(Math.random() * topVotes.length)]!;
+    } else if (suggestions && suggestions.size > 0) {
+      const names = [...suggestions.values()];
+      winner = names[Math.floor(Math.random() * names.length)]!;
+    }
+    team.name = winner;
+    results.push({ teamId, name: winner });
+    await db.update(schema.teams).set({ name: winner }).where(eq(schema.teams.id, teamId));
+  }
+  game.teamNaming = null;
+  broadcast(game, 'TEAM_NAMES_FINAL', { teams: results });
+  // Now start the actual game
+  doGameStart(game, gameId);
 }
 
 export function initWebSockets(server: import('node:http').Server) {
@@ -367,18 +482,19 @@ export function initWebSockets(server: import('node:http').Server) {
           }
           await setGameStatus(gameId, 'active');
           current.status = 'active';
-          // Intro lockout: 23s "this is jeopardy" audio + ~3s board fill.
-          // Player who picks first can't select a clue until this elapses.
-          const INTRO_MS = 26000;
-          current.boardReadyAt = Date.now() + INTRO_MS;
-          broadcast(current, 'GAME_START', { boardReadyAt: current.boardReadyAt });
-          broadcast(current, 'BOARD_STATE', boardState(current));
-          const timer = setTimeout(() => {
-            const g = (globalThis as any)._jeoparty_games?.get(gameId) ?? current;
-            if (g) g.boardReadyAt = null;
-            broadcast(current, 'BOARD_READY');
-          }, INTRO_MS);
-          trackTimer(gameId, timer);
+
+          if (current.teamMode && current.teams.size > 0) {
+            // Start team naming phase before the intro plays.
+            startTeamNaming(current);
+          } else {
+            doGameStart(current, gameId);
+          }
+        }
+
+        if (data.type === 'SKIP_TEAM_NAMING' && current.teamNaming) {
+          if (current.teamNaming.timer) clearTimeout(current.teamNaming.timer);
+          current.teamNaming = null;
+          doGameStart(current, gameId);
         }
 
         if (data.type === 'SKIP_QUESTION') {
@@ -391,24 +507,26 @@ export function initWebSockets(server: import('node:http').Server) {
           if (current.usedQuestions.has(questionId)) return;
           const found = findQuestion(current, questionId);
           if (!found) return;
+          const isDD = found.question.isDailyDouble && current.options.dailyDoubles;
           current.currentQuestion = {
             questionId,
             value: found.question.value,
-            isDailyDouble: found.question.isDailyDouble,
+            isDailyDouble: isDD,
             buzzerOpen: false,
             serverBuzzerOpenTime: null,
             buzzCollectDeadline: null,
             buzzOrder: [],
             eliminated: new Set(),
           };
+          void persistCurrentQuestion(gameId, current.currentQuestion);
           broadcast(current, 'QUESTION_OPEN', {
             questionId,
             categoryTitle: found.category.title,
             value: found.question.value,
             questionText: found.question.question,
-            isDailyDouble: found.question.isDailyDouble,
+            isDailyDouble: isDD,
           });
-          if (!found.question.isDailyDouble) openBuzzer(current);
+          if (!isDD) openBuzzer(current);
         }
 
         if (data.type === 'JUDGE') {
@@ -418,6 +536,7 @@ export function initWebSockets(server: import('node:http').Server) {
         if (data.type === 'DAILY_DOUBLE_WAGER_ACCEPTED' && current.currentQuestion?.isDailyDouble) {
           current.currentQuestion.dailyDoubleWager = Number(data.wager);
           current.currentQuestion.winnerId = data.playerId as string;
+          void persistCurrentQuestion(gameId, current.currentQuestion);
           broadcast(current, 'BUZZ_WINNER', {
             playerId: data.playerId,
             displayName: current.players.get(data.playerId)?.displayName ?? 'Player',
@@ -490,7 +609,11 @@ export function initWebSockets(server: import('node:http').Server) {
 
         if (data.type === 'ADVANCE_ROUND') {
           const nextRound = current.currentRound + 1;
-          if (nextRound >= current.board.rounds.length) return;
+          if (nextRound >= current.board.rounds.length) {
+            // All rounds complete — prompt host to start Final Jeopardy.
+            sendToHost(current, 'FINAL_JEOPARDY_READY', {});
+            return;
+          }
           current.currentRound = nextRound;
           await db.update(schema.games).set({ currentRound: nextRound }).where(eq(schema.games.id, gameId));
           broadcast(current, 'ROUND_ADVANCE', {
@@ -514,6 +637,7 @@ export function initWebSockets(server: import('node:http').Server) {
             finalQuestion: current.board.finalQuestion,
             revealed: new Set<string>(),
           };
+          void persistFinalJeopardy(gameId, current.finalJeopardy);
           broadcast(current, 'START_FINAL_JEOPARDY', {
             category: current.board.finalCategory,
             eligiblePlayerIds: finalJeopardyEligible(current),
@@ -525,6 +649,7 @@ export function initWebSockets(server: import('node:http').Server) {
           const playerId = data.playerId as string;
           const correct = !!data.correct;
           current.finalJeopardy.judgments.set(playerId, correct);
+          void persistFinalJeopardy(gameId, current.finalJeopardy);
           sendToHost(current, 'FINAL_JUDGMENT_ACK', { playerId, correct });
         }
 
@@ -532,6 +657,7 @@ export function initWebSockets(server: import('node:http').Server) {
           const playerId = data.playerId as string;
           if (current.finalJeopardy.revealed.has(playerId)) return;
           current.finalJeopardy.revealed.add(playerId);
+          void persistFinalJeopardy(gameId, current.finalJeopardy);
           const judgment = current.finalJeopardy.judgments.get(playerId);
           if (judgment === undefined) return; // host must judge before revealing
           const p = current.players.get(playerId);
@@ -577,24 +703,26 @@ export function initWebSockets(server: import('node:http').Server) {
           if (current.usedQuestions.has(questionId)) return;
           const found = findQuestion(current, questionId);
           if (!found) return;
+          const isDD = found.question.isDailyDouble && current.options.dailyDoubles;
           current.currentQuestion = {
             questionId,
             value: found.question.value,
-            isDailyDouble: found.question.isDailyDouble,
+            isDailyDouble: isDD,
             buzzerOpen: false,
             serverBuzzerOpenTime: null,
             buzzCollectDeadline: null,
             buzzOrder: [],
             eliminated: new Set(),
           };
+          void persistCurrentQuestion(gameId, current.currentQuestion);
           broadcast(current, 'QUESTION_OPEN', {
             questionId,
             categoryTitle: found.category.title,
             value: found.question.value,
             questionText: found.question.question,
-            isDailyDouble: found.question.isDailyDouble,
+            isDailyDouble: isDD,
           });
-          if (!found.question.isDailyDouble) openBuzzer(current);
+          if (!isDD) openBuzzer(current);
         }
 
         if (data.type === 'BUZZ') {
@@ -655,9 +783,10 @@ export function initWebSockets(server: import('node:http').Server) {
           const raw = Number(data.wager);
           const wager = Math.max(5, Math.min(maxWager, Number.isFinite(raw) ? Math.floor(raw) : 0));
           current.currentQuestion.dailyDoubleWager = wager;
+          current.currentQuestion.winnerId = meta.playerId;
+          void persistCurrentQuestion(gameId, current.currentQuestion);
           broadcast(current, 'DAILY_DOUBLE_WAGER', { playerId: meta.playerId, wager });
           // Auto-emit BUZZ_WINNER so the host UI moves into judging mode (no buzzer phase for DD)
-          current.currentQuestion.winnerId = meta.playerId;
           broadcast(current, 'BUZZ_WINNER', {
             playerId: meta.playerId,
             displayName: player.displayName,
@@ -671,6 +800,7 @@ export function initWebSockets(server: import('node:http').Server) {
           if (!Number.isFinite(raw)) return;
           const wager = Math.max(0, Math.min(player.score, raw));
           current.finalJeopardy.wagers.set(meta.playerId, wager);
+          void persistFinalJeopardy(gameId, current.finalJeopardy);
           await maybeStartFinalPrompt(current);
         }
 
@@ -678,9 +808,61 @@ export function initWebSockets(server: import('node:http').Server) {
           const player = current.players.get(meta.playerId);
           if (!player || player.score <= 0) return;
           current.finalJeopardy.answers.set(meta.playerId, String(data.answer ?? ''));
+          void persistFinalJeopardy(gameId, current.finalJeopardy);
           const eligible = finalJeopardyEligible(current);
           const allAnswered = eligible.every((id) => current.finalJeopardy?.answers.has(id));
           if (allAnswered) sendFinalResultsToHost(current);
+        }
+
+        if (data.type === 'CHANGE_AVATAR' && current.status === 'lobby') {
+          const player = current.players.get(meta.playerId);
+          if (!player) return;
+          const newColor = Math.max(0, Math.min(5, Number.isFinite(Number(data.avatarColor)) ? Math.floor(Number(data.avatarColor)) : player.avatarColor));
+          const newShape = Math.max(0, Math.min(5, Number.isFinite(Number(data.avatarShape)) ? Math.floor(Number(data.avatarShape)) : player.avatarShape));
+          // Check uniqueness
+          const taken = Array.from(current.players.entries())
+            .filter(([id]) => id !== meta.playerId)
+            .some(([, p]) => p.avatarColor === newColor && p.avatarShape === newShape);
+          if (taken) {
+            send(ws, 'AVATAR_TAKEN', {});
+            return;
+          }
+          player.avatarColor = newColor;
+          player.avatarShape = newShape;
+          await db.update(schema.players).set({ avatarColor: newColor, avatarShape: newShape } as any).where(eq(schema.players.id, meta.playerId));
+          broadcast(current, 'BOARD_STATE', boardState(current));
+        }
+
+        if (data.type === 'SUGGEST_TEAM_NAME' && current.teamNaming?.phase === 'suggesting') {
+          const player = current.players.get(meta.playerId);
+          if (!player || player.teamId == null) return;
+          const suggestion = String(data.suggestion || '').trim().slice(0, 32);
+          if (!suggestion) return;
+          let teamSuggestions = current.teamNaming.suggestions.get(player.teamId);
+          if (!teamSuggestions) {
+            teamSuggestions = new Map();
+            current.teamNaming.suggestions.set(player.teamId, teamSuggestions);
+          }
+          teamSuggestions.set(meta.playerId, suggestion);
+          // Check if all players on all teams have suggested — if so advance early
+          const allSuggested = checkAllTeamsSuggested(current);
+          if (allSuggested) advanceToVoting(current, gameId);
+        }
+
+        if (data.type === 'VOTE_TEAM_NAME' && current.teamNaming?.phase === 'voting') {
+          const player = current.players.get(meta.playerId);
+          if (!player || player.teamId == null) return;
+          const vote = String(data.suggestion || '').trim();
+          if (!vote) return;
+          let teamVotes = current.teamNaming.votes.get(player.teamId);
+          if (!teamVotes) {
+            teamVotes = new Map();
+            current.teamNaming.votes.set(player.teamId, teamVotes);
+          }
+          teamVotes.set(meta.playerId, vote);
+          // Check if all players have voted
+          const allVoted = checkAllTeamsVoted(current);
+          if (allVoted) finalizeTeamNames(current, gameId);
         }
       }
     });

@@ -1,7 +1,33 @@
 ---
 import '@/styles/global.css';
+import { PLAYER_COOKIE, verifyPlayerToken } from '@/lib/auth';
+import { db, schema } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+
 // Pre-fill game code from URL param: /join?code=ABCD
 const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+
+// Rejoin: check if the player has an active game cookie
+let rejoinGameId: string | null = null;
+let rejoinName: string | null = null;
+try {
+  const existing = Astro.cookies.get(PLAYER_COOKIE)?.value;
+  if (existing) {
+    const payload = verifyPlayerToken(existing);
+    if (payload) {
+      const rows = await db.select({ status: schema.games.status })
+        .from(schema.games).where(eq(schema.games.id, payload.gameId));
+      if (rows.length && rows[0].status !== 'finished') {
+        const playerRows = await db.select({ displayName: schema.players.displayName })
+          .from(schema.players).where(eq(schema.players.id, payload.playerId));
+        if (playerRows.length) {
+          rejoinGameId = payload.gameId;
+          rejoinName = playerRows[0].displayName;
+        }
+      }
+    }
+  }
+} catch {}
 ---
 <html lang="en">
 <head>
@@ -159,6 +185,27 @@ const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[
     .grow { flex: 1; min-height: 24px; }
     .hidden { display: none !important; }
 
+    /* Rejoin banner */
+    .rejoin-banner {
+      background: var(--bg2);
+      border: 1.5px solid var(--gold);
+      border-radius: 16px;
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .rejoin-info { flex: 1; min-width: 0; }
+    .rejoin-eyebrow { font-size: 10px; color: var(--gold); letter-spacing: 0.24em; font-weight: 700; }
+    .rejoin-name { font-family: 'Anton', sans-serif; font-size: 20px; color: var(--ink); letter-spacing: 0.04em; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rejoin-btn {
+      background: var(--gold); color: #0E0B22;
+      font-family: 'Anton', sans-serif; font-size: 14px; letter-spacing: 0.1em;
+      padding: 10px 16px; border-radius: 999px; border: none; cursor: pointer; white-space: nowrap;
+    }
+    .rejoin-btn:active { opacity: 0.85; }
+
     /* Host card variant */
     .host-card {
       margin-top: 36px;
@@ -198,8 +245,19 @@ const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[
 </head>
 <body>
   <main class="join-shell">
-    <div class="join-title">JEOPARTY</div>
+    <!-- 3D logo container — replaces plain text title -->
+    <div id="logoContainer" style="position: relative; height: 120px; width: 100%; margin-bottom: -8px;" aria-hidden="true"></div>
     <div class="join-tagline">PARTY · TRIVIA · CHAOS</div>
+
+    {rejoinGameId && (
+      <div class="rejoin-banner" style="margin-top: 28px;">
+        <div class="rejoin-info">
+          <div class="rejoin-eyebrow">GAME IN PROGRESS · {rejoinGameId}</div>
+          <div class="rejoin-name">{rejoinName}</div>
+        </div>
+        <a href={`/game/${rejoinGameId}/play`} class="rejoin-btn">REJOIN →</a>
+      </div>
+    )}
 
     <!-- Player join -->
     <section id="joinCard">
@@ -369,7 +427,7 @@ const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[
       const res = await fetch(`/api/games/${code}/join`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ displayName: name }),
+        body: JSON.stringify({ displayName: name, avatarColor: avatarIdx, avatarShape: 0 }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -401,6 +459,15 @@ const code = (Astro.url.searchParams.get('code') ?? '').toUpperCase().replace(/[
       const savedName = localStorage.getItem('jp.displayName');
       if (savedName) document.getElementById('displayName').value = savedName;
     } catch {}
+  </script>
+
+  <!-- 3D logo (non-inline script so Vite can bundle Three.js) -->
+  <script>
+    import { createLogoIdle } from '@/scripts/intro-3d';
+    const container = document.getElementById('logoContainer');
+    if (container) {
+      createLogoIdle(container, '/fonts/Anton.typeface.json').catch(() => {});
+    }
   </script>
 </body>
 </html>

@@ -191,7 +191,10 @@ const seed = {
     
     <!-- App Bar -->
     <header class="app-bar">
-      <div class="logo">JEOPARTY<span class="badge">HOST</span></div>
+      <div class="logo" style="display:flex;align-items:center;gap:6px;">
+        <div id="hostLogoContainer" style="position:relative;width:180px;height:48px;" aria-hidden="true"></div>
+        <span class="badge">HOST</span>
+      </div>
       <div style="display: flex; align-items: center; gap: 10px;">
         <span class="game-code" id="gameCodeDisplay">{gameId}</span>
         <button class="menu-btn" id="menuBtn">⋯</button>
@@ -410,6 +413,18 @@ const seed = {
         document.getElementById('skipClueWrap').classList.remove('hidden');
         updateClueCard();
         renderPlayerList();
+      } else if (msg.type === 'ROUND_ADVANCE') {
+        currentRound = msg.roundIndex ?? currentRound;
+        updateNextBtn();
+      } else if (msg.type === 'FINAL_JEOPARDY_READY') {
+        // All regular rounds done — prompt host to confirm Final Jeopardy
+        if (confirm('All rounds complete! Start Final Jeoparty?')) {
+          ws.send(JSON.stringify({ type: 'START_FINAL_JEOPARDY' }));
+        }
+      } else if (msg.type === 'TEAM_NAMING_START') {
+        showTeamNamingOverlay(msg);
+      } else if (msg.type === 'TEAM_NAMES_FINAL') {
+        hideTeamNamingOverlay();
       } else if (msg.type === 'GAME_OVER') {
         showGameOverOverlay(msg);
       } else if (msg.type === 'FINAL_JEOPARDY_REVEAL') {
@@ -419,6 +434,40 @@ const seed = {
         finalState.revealed[msg.playerId] = true;
         renderFinalResponses();
       }
+    }
+
+    function showTeamNamingOverlay(msg) {
+      let overlay = document.getElementById('teamNamingOverlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'teamNamingOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,11,34,0.97);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:200;padding:2rem;gap:16px;text-align:center;';
+        document.body.appendChild(overlay);
+      }
+      const phase = msg.phase;
+      const teams = msg.teams || [];
+      const secsLeft = msg.deadline ? Math.max(0, Math.round((msg.deadline - Date.now()) / 1000)) : '?';
+      overlay.innerHTML = `
+        <div style="font-family:'Anton',sans-serif;font-size:1.1rem;color:var(--dim);letter-spacing:0.32em;">${phase === 'suggesting' ? 'TEAM NAMING — PLAYERS ARE TYPING' : 'TEAM NAMING — VOTE IN PROGRESS'}</div>
+        <div style="font-size:13px;color:var(--dim);">${secsLeft}s remaining</div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;">
+          ${teams.map(t => `<div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 18px;">
+            <div style="font-family:'Anton',sans-serif;font-size:16px;color:var(--gold);">${t.teamName || 'Team'}</div>
+            <div style="font-size:11px;color:var(--dim);margin-top:4px;">${t.playerIds ? t.playerIds.length + ' players' : ''}</div>
+            ${phase === 'voting' && t.suggestions ? '<div style="font-size:12px;color:var(--ink);margin-top:6px;">' + (t.suggestions || []).map(s => `<div>${s}</div>`).join('') + '</div>' : ''}
+          </div>`).join('')}
+        </div>
+        <button id="skipNamingBtn" style="background:var(--bg2);border:1px solid var(--line);color:var(--dim);font-family:'Anton',sans-serif;font-size:13px;padding:10px 24px;border-radius:999px;cursor:pointer;letter-spacing:0.12em;margin-top:8px;">SKIP →</button>
+      `;
+      document.getElementById('skipNamingBtn')?.addEventListener('click', () => {
+        overlay.style.display = 'none';
+        ws.send(JSON.stringify({ type: 'SKIP_TEAM_NAMING' }));
+      });
+    }
+
+    function hideTeamNamingOverlay() {
+      const overlay = document.getElementById('teamNamingOverlay');
+      if (overlay) overlay.style.display = 'none';
     }
 
     function showGameOverOverlay(msg) {
@@ -440,6 +489,19 @@ const seed = {
       document.getElementById('hostHomeBtn').onclick = () => { location.href = '/dashboard'; };
     }
 
+    function updateNextBtn() {
+      const btn = document.getElementById('nextRoundBtn');
+      const totalRounds = rounds.length;
+      const isLastRound = (currentRound + 1) >= totalRounds;
+      if (isLastRound) {
+        btn.textContent = 'FINAL JEOPARTY →';
+        btn.style.color = 'var(--gold)';
+      } else {
+        btn.textContent = 'NEXT →';
+        btn.style.color = '';
+      }
+    }
+
     function applySyncState(state) {
       if (state.serverTime && state.serverTime < lastStateTime) return;
       lastStateTime = state.serverTime || Date.now();
@@ -453,13 +515,15 @@ const seed = {
       document.getElementById('roundInfo').textContent = `ROUND ${currentRound + 1} · ${usedSet.size}/${totalQ}`;
       document.getElementById('lobbyCTA').classList.toggle('hidden', state.status !== 'lobby');
 
+      updateNextBtn();
+
       // Sync team config from server
       if (typeof state.teamMode === 'boolean') {
         lobbyConfig.teamMode = state.teamMode;
         lobbyConfig.numTeams = (state.teams || []).length || lobbyConfig.numTeams;
         applyLobbyConfigUI();
       }
-      
+
       renderPlayerList();
       renderBoard();
       updateClueCard();
@@ -630,7 +694,16 @@ const seed = {
     document.getElementById('menuBtn').onclick = () => document.getElementById('menuOverlay').classList.remove('hidden');
     document.getElementById('closeMenuOverlay').onclick = () => document.getElementById('menuOverlay').classList.add('hidden');
     document.getElementById('startGameBtn').onclick = () => ws.send(JSON.stringify({ type: 'GAME_START' }));
-    document.getElementById('nextRoundBtn').onclick = () => ws.send(JSON.stringify({ type: 'ADVANCE_ROUND' }));
+    document.getElementById('nextRoundBtn').onclick = () => {
+      const isLastRound = (currentRound + 1) >= rounds.length;
+      if (isLastRound) {
+        if (confirm('Start Final Jeoparty?')) {
+          ws.send(JSON.stringify({ type: 'START_FINAL_JEOPARDY' }));
+        }
+      } else {
+        ws.send(JSON.stringify({ type: 'ADVANCE_ROUND' }));
+      }
+    };
     document.getElementById('revealBtn').onclick = () => ws.send(JSON.stringify({ type: 'REVEAL_QUESTION' }));
     document.getElementById('skipClueBtn').onclick = () => ws.send(JSON.stringify({ type: 'SKIP_QUESTION' }));
     document.getElementById('menuPresenter').onclick = () => window.open(`/game/${gameId}`, '_blank');
@@ -734,6 +807,14 @@ const seed = {
       });
     }
 
+  </script>
+
+  <script>
+    import { createLogoIdle } from '@/scripts/intro-3d';
+    const container = document.getElementById('hostLogoContainer');
+    if (container) {
+      createLogoIdle(container, '/fonts/Anton.typeface.json').catch(() => {});
+    }
   </script>
 </body>
 </html>
