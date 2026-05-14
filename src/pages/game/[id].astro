@@ -493,9 +493,6 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       }
 
       if (msg.type === 'BUZZ_WINNER') {
-        const color = playerColorMap[msg.displayName] || '#FF3D8E';
-        buzzBanner.style.background = color;
-        buzzBanner.style.boxShadow = `0 12px 36px ${color}80`;
         buzzName.textContent = msg.displayName + ' BUZZED IN';
         buzzBanner.classList.remove('hidden');
         highlightBuzzedPlayer(msg.displayName);
@@ -830,7 +827,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       gameState.scores.forEach(p => {
         const chip = document.createElement('div');
         chip.id = 'pl-' + p.playerId;
-        chip.style.cssText = 'background:rgba(74,48,160,0.5);border:1px solid var(--border);border-radius:12px;padding:.4rem 1rem;font-family:Fredoka,sans-serif;font-size:1.1rem;';
+        chip.style.cssText = 'background:rgba(74,48,160,0.5);border:1px solid var(--border);border-radius:12px;padding:.4rem 1rem;font-family:Fredoka,sans-serif;font-size:1.1rem;text-transform:uppercase;';
         chip.textContent = p.displayName;
         playerList.appendChild(chip);
       });
@@ -853,9 +850,6 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         questionOverlay.classList.remove('hidden');
         // Restore buzz winner if present
         if (state.buzzWinner) {
-          const color = playerColorMap[state.buzzWinner.displayName] || '#FF3D8E';
-          buzzBanner.style.background = color;
-          buzzBanner.style.boxShadow = `0 12px 36px ${color}80`;
           buzzName.textContent = state.buzzWinner.displayName + ' BUZZED IN';
           buzzBanner.classList.remove('hidden');
           highlightBuzzedPlayer(state.buzzWinner.displayName);
@@ -955,8 +949,8 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       document.querySelectorAll('.presenter-player-card').forEach(card => {
         const isBuzzed = card.dataset.player === displayName;
         card.classList.toggle('buzzed', isBuzzed);
-        card.style.borderColor = isBuzzed ? (playerColorMap[displayName] || 'transparent') : 'transparent';
-        card.style.boxShadow = isBuzzed ? `0 0 24px ${playerColorMap[displayName] || '#FF3D8E'}55` : 'none';
+        card.style.borderColor = isBuzzed ? '#FF3D8E' : 'transparent';
+        card.style.boxShadow = isBuzzed ? '0 0 32px rgba(255, 61, 142, 0.4)' : 'none';
       });
     }
 

@@ -88,10 +88,10 @@ const seed = {
     .clue-cat { font-family: 'Anton', sans-serif; font-size: 14px; letter-spacing: 0.06em; color: var(--ink); text-transform: uppercase; }
     .clue-val { font-family: 'Anton', sans-serif; font-size: 18px; color: var(--gold); position: absolute; top: 14px; right: 16px; }
     .label { font-size: 9px; color: var(--dim); letter-spacing: 0.22em; font-family: 'Space Grotesk', sans-serif; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
-    .clue-text { font-family: 'Anton', sans-serif; font-size: 18px; line-height: 1.2; letter-spacing: 0.01em; color: var(--ink); margin-top: 4px; }
+    .clue-text { font-family: 'Anton', sans-serif; font-size: 18px; line-height: 1.2; letter-spacing: 0.01em; color: var(--ink); margin-top: 4px; text-transform: uppercase; }
     
     .answer-row { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .answer-text { font-family: 'Anton', sans-serif; font-size: 18px; color: var(--mint); letter-spacing: 0.04em; }
+    .answer-text { font-family: 'Anton', sans-serif; font-size: 18px; color: var(--mint); letter-spacing: 0.04em; text-transform: uppercase; }
     
     .judge-panel { background: var(--bg2); border-radius: 12px; padding: 14px 14px 12px; border: 2px solid transparent; transition: all 0.3s ease; }
     .judge-active { border-color: var(--magenta); box-shadow: 0 0 32px rgba(255, 61, 142, 0.2); }
@@ -102,7 +102,7 @@ const seed = {
     
     .judge-target { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
     .avatar-large { width: 48px; height: 48px; border-radius: 12px; background: var(--magenta); display: flex; align-items: center; justify-content: center; font-size: 26px; color: #0E0B22; font-weight: 800; }
-    .judge-name { font-family: 'Anton', sans-serif; font-size: 22px; letter-spacing: 0.04em; color: var(--ink); line-height: 1.1; }
+    .judge-name { font-family: 'Anton', sans-serif; font-size: 22px; letter-spacing: 0.04em; color: var(--ink); line-height: 1.1; text-transform: uppercase; }
     
     .judge-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .btn-judge { border: none; border-radius: 10px; cursor: pointer; font-family: 'Anton', sans-serif; font-size: 18px; letter-spacing: 0.06em; padding: 14px 0; color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; }
@@ -117,7 +117,7 @@ const seed = {
     .row-highlight { background: var(--bg3); }
     .player-rank { font-family: 'Anton', sans-serif; font-size: 12px; color: var(--dim); width: 12px; flex-shrink: 0; }
     .avatar-small { width: 26px; height: 26px; border-radius: 6px; background: var(--gold); display: flex; align-items: center; justify-content: center; font-size: 13px; color: #0E0B22; font-weight: 700; flex-shrink: 0; }
-    .player-name-row { flex: 1; min-width: 0; font-family: 'Anton', sans-serif; font-size: 14px; letter-spacing: 0.04em; color: var(--ink); }
+    .player-name-row { flex: 1; min-width: 0; font-family: 'Anton', sans-serif; font-size: 14px; letter-spacing: 0.04em; color: var(--ink); text-transform: uppercase; }
     /* Grid keeps − / $ / + on one optical row (Anton score vs square buttons). */
     .player-score-group {
       display: grid;
@@ -569,7 +569,7 @@ const seed = {
       document.getElementById('judgeNameDisplay').textContent = buzz.displayName;
       document.getElementById('buzzTimeDisplay').textContent =
         buzz.time != null && Number.isFinite(Number(buzz.time)) ? `${Number(buzz.time)}s` : '—';
-      document.getElementById('judgeRewardNote').textContent = `+ $${openQuestion?.value || 0} → ${buzz.displayName}`;
+      document.getElementById('judgeRewardNote').textContent = `+ $${openQuestion?.value || 0} → ${buzz.displayName.toUpperCase()}`;
 
       const avatar = document.getElementById('judgeAvatar');
       avatar.style.background = getAvatarColor(buzz.playerId);
