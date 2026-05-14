@@ -31,3 +31,5 @@
 - [x] for the host login flow on their mobile device, when redirecting to login, use a query param to indicate that the login modal should be shown (currently it just sends them to the homepage, doesnt actually say to login)
 
 - [ ] animate the game results at the end of the game, starting from lowest score to highest score, with the winning team/player doing a little dance or something
+
+- [ ] url to join on the presenter lobby does not correctly reflect the domain the app is running on. should check the qr code too

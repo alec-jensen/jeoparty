@@ -4,6 +4,7 @@ import '@/styles/global.css';
 import QRCode from 'qrcode';
 import { HOST_COOKIE } from '@/lib/auth';
 import { db, schema } from '@/lib/db';
+import { getPublicOrigin } from '@/lib/requestOrigin';
 import { eq, inArray } from 'drizzle-orm';
 
 if (!Astro.locals.host) return Astro.redirect(`/?showLogin=1&next=/game/${Astro.params.id}/host`);
@@ -40,7 +41,8 @@ for (const c of categoryRows) {
 }
 const rounds = roundRows.map(r => ({ ...r, categories: categoriesByRound.get(r.id) ?? [] }));
 
-const joinUrl = `${Astro.url.origin}/join?code=${gameId}`;
+const publicOrigin = getPublicOrigin(Astro.request, Astro.url);
+const joinUrl = `${publicOrigin}/join?code=${gameId}`;
 const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#f5c518', light: '#0d0a1e' }, margin: 1 });
 
 const seed = {

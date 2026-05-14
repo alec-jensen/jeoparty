@@ -2,6 +2,7 @@
 import '@/styles/global.css';
 import QRCode from 'qrcode';
 import { db, schema } from '@/lib/db';
+import { getPublicOrigin } from '@/lib/requestOrigin';
 import { eq } from 'drizzle-orm';
 
 const gameId = String(Astro.params.id).toUpperCase();
@@ -9,7 +10,9 @@ const gameRows = await db.select({ id: schema.games.id, status: schema.games.sta
   .from(schema.games).where(eq(schema.games.id, gameId));
 if (!gameRows.length) return Astro.redirect('/');
 
-const joinUrl = `${Astro.url.origin}/join?code=${gameId}`;
+const publicOrigin = getPublicOrigin(Astro.request, Astro.url);
+const publicHost = new URL(publicOrigin).host;
+const joinUrl = `${publicOrigin}/join?code=${gameId}`;
 const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC83D', light: '#0E0B22' }, margin: 1 });
 ---
 <html lang="en">
@@ -205,7 +208,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     <div id="lobbyScreen" style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2rem;">
       <div id="lobbyLogoContainer" style="position:relative; width:80vw; max-width:1100px; height:220px;" aria-hidden="true"></div>
       <div class="join-code">{gameId}</div>
-      <p style="font-family:'Anton',sans-serif; font-size:1.6rem; color:var(--muted);">Go to <strong style="color:var(--text);">{Astro.url.host}/join</strong> and enter the code above</p>
+      <p style="font-family:'Anton',sans-serif; font-size:1.6rem; color:var(--muted);">Go to <strong style="color:var(--text);">{publicHost}/join</strong> and enter the code above</p>
       <div set:html={qrSvg} style="width:220px; height:220px;" />
       <div id="playerList" style="display:flex; gap:1rem; flex-wrap:wrap; justify-content:center; max-width:1200px; margin-top:0.5rem;"></div>
     </div>
