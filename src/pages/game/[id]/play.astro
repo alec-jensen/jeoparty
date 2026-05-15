@@ -1271,6 +1271,10 @@ const initialPlayerId = payload?.playerId ?? '';
           // If this player was eliminated (wrong answer), don't re-enable their buzzer
         }
 
+        if (msg.type === 'BUZZER_LOCKED') {
+          canBuzz = false;
+        }
+
         if (msg.type === 'BUZZ_WINNER') {
           canBuzz = false;
           if (msg.playerId === playerId) {

@@ -251,6 +251,8 @@ async function maybeStartFinalPrompt(game: ActiveGame) {
 
 function sendFinalResultsToHost(game: ActiveGame) {
   if (!game.finalJeopardy) return;
+  if (game.finalJeopardy.resultsSent) return;
+  game.finalJeopardy.resultsSent = true;
   const eligible = finalJeopardyEligible(game);
   const results = eligible.map((id) => {
     const pl = game.players.get(id)!;

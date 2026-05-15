@@ -92,6 +92,7 @@ export interface ActiveGame {
     finalQuestion: string;
     judgments: Map<string, boolean>;
     revealed: Set<string>;
+    resultsSent?: boolean;
   } | null;
   /** Team name suggestion/voting state — only present during naming phase */
   teamNaming: {

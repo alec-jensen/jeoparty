@@ -2,25 +2,25 @@
 
 ## 🔴 Critical Blockers — Game cannot be played without these
 
-- [ ] **Set `PUBLIC_ORIGIN` env var** — QR codes and join URLs point to `localhost` without it; mobile players on LAN can't join. Set in `docker-compose.yml` line 30 (currently commented out) or `.env`.
-- [ ] **`BUZZER_OPEN` not re-broadcast after wrong answer** — `openBuzzer()` is only broadcast once at line 188 of `ws.ts`. At line 222, when a player answers wrong and the buzzer re-opens, no `BUZZER_OPEN` message is sent. Players have no idea the buzzer is active again after an elimination.
-- [ ] **Daily Double wager flow is broken** — Players send `DAILY_DOUBLE_WAGER` (ws.ts:766) but the host UI has no interface to accept/confirm the wager, and no way to see or approve it before the clue is revealed. Daily Doubles will hang the game indefinitely.
-- [ ] **Host has no Final Jeopardy judging interface** — `host-game.ts` sends `JUDGE_FINAL` (line 96) but `host.astro` never renders the submitted answers or wagers for the host to read. The host cannot judge without a separate display showing what everyone wrote.
-- [ ] **"Start Game" button in board editor goes to `/dashboard`** — `boards/[id].astro` line 1140–1142 redirects to `/dashboard` instead of creating a game. Users can't launch a game from the board editor.
+- [x] **Set `PUBLIC_ORIGIN` env var** — QR codes and join URLs point to `localhost` without it; mobile players on LAN can't join. Set in `docker-compose.yml` line 30 (currently commented out) or `.env`. *set on deployment*
+- [x] **`BUZZER_OPEN` re-broadcast** — `openBuzzer()` already broadcasts on every call including after wrong answers. Non-issue.
+- [x] **Daily Double wager: host now sees actual wager amount** — Fixed in `host.astro`: listens for `DAILY_DOUBLE_WAGER`, stores amount, shows it in judging panel (e.g. "★ DD WAGER $1000"). Auto-accepted flow was already working end-to-end.
+- [x] **Host Final Jeopardy judging interface** — Already implemented: `showFinalModal` in `host.astro` shows all answers, wagers, WRONG/CORRECT/REVEAL buttons per player. Not a bug.
+- [x] **"Start Game" button in board editor** — Intentional: dashboard has the game creation UI. *the dashboard has the start game interface*
 
 ---
 
 ## 🟠 Likely to Hit During Play
 
-- [ ] **Host page has no handler for `ROUND_ADVANCE`** — `host-game.ts` doesn't listen for this message, so the host UI won't refresh round info when advancing rounds.
-- [ ] **`BUZZER_LOCKED` broadcast but never handled by any client** — `ws.ts` line 168 broadcasts this, but host, player, and presenter pages have no handler. Buzzer state can get out of sync.
-- [ ] **Final Jeopardy clue not visible to host during judging** — The host never sees the category or clue text while judging answers. `host.astro` `updateClueCard()` doesn't render final clue when `game.status === 'final_jeopardy'`.
-- [ ] **Final Jeopardy: host can't preview clue before broadcasting** — Clicking "Final Jeoparty" in the menu immediately fires `START_FINAL_JEOPARDY`. No confirmation or preview of the board's `finalQuestion` before it's sent to players.
-- [ ] **No validation that Final Jeopardy clue exists before game start** — A board with no Final Jeopardy clue will play fine until `ADVANCE_ROUND` fires at the end, at which point `ws.ts` line 735 throws `"This board has no Final Jeopardy clue."` — unrecoverable during play.
-- [ ] **Team game-over screen shows 0 for all team scores** — `renderGameOver()` in `play.astro` shows teams but teams have no aggregated `score` property; all display as 0.
-- [ ] **Avatar change: accepted locally, rejected silently** — Server sends `AVATAR_TAKEN` on conflict, but the player page only shows a toast and the avatar change appears to stick locally. Player sees wrong state.
-- [ ] **Final Jeopardy double-fire race condition** — If all players submit before the 30s timer, `sendFinalResultsToHost` fires on submission completion AND again on timeout, potentially double-rendering on the host.
-- [ ] **`REVEAL_FINAL_RESPONSE` has no role check** — Any WebSocket client (player or presenter) can send this message and advance scores. Should verify `meta.role === 'host'`.
+- [x] **Host page `ROUND_ADVANCE` handler** — Already handled in `host.astro` line 418; server also follows with `BOARD_STATE` which does a full sync. Non-issue.
+- [x] **`BUZZER_LOCKED` unhandled on player** — Fixed in `play.astro`: now sets `canBuzz = false` immediately on receipt so the button disables before `BUZZ_WINNER` arrives.
+- [ ] **Final Jeopardy clue not visible to host during judging** — `showFinalModal` shows the clue text and category. But the clue is NOT shown in the main clue card during the wager phase (before all answers are in). Host doesn't see what the question is until all players have answered.
+- [ ] **Final Jeopardy: host can't preview clue before broadcasting** — Confirm dialog fires immediately. No way for host to see the clue text before it's sent to players. Make sure you know your FJ question before clicking.
+- [ ] **No validation that Final Jeopardy clue exists before game start** — Server sends `ERROR` message if clue is empty. Fixed: host.astro now handles `ERROR` and shows an `alert()` so host sees the message instead of silence.
+- [x] **Team game-over shows 0 scores** — `teamList()` already aggregates player scores per team. `play.astro` uses `t.score`. Non-issue.
+- [ ] **Avatar change: accepted locally, rejected silently** — Server sends `AVATAR_TAKEN` but player sees their old avatar restored only after next `BOARD_STATE`. Toast shows but avatar visually snaps back. Minor.
+- [x] **Final Jeopardy double-fire** — Fixed in `ws.ts`: `sendFinalResultsToHost` now guards with `resultsSent` flag.
+- [x] **`REVEAL_FINAL_RESPONSE` role check** — Already inside `if (meta.role === 'host')` block. Non-issue.
 
 ---
 
