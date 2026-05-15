@@ -1338,21 +1338,36 @@ const initialPlayerId = payload?.playerId ?? '';
             hideClue();
             phaseRoot.innerHTML = `
               <div class="big-text-area">
-                <div class="big-text-eyebrow">FINAL JEOPARDY</div>
+                <div class="big-text-eyebrow">FINAL JEOPARTY</div>
                 <div class="big-text-headline locked">SPECTATING</div>
-                <div class="big-text-sub">Only players with a positive score play Final Jeopardy.</div>
+                <div class="big-text-sub">Only players with a positive score play Final Jeoparty.</div>
               </div>
             `;
             setFooter('Watch the screen', { color: 'var(--violet)' });
             return;
           }
+          // Show how-it-works instructions for 3.5 seconds, then transition to wager input
           if (msg.category) showClue(msg.category, 0);
-          renderWagerInput({
-            mode: 'final',
-            eyebrow: 'FINAL JEOPARDY',
-            headline: 'Set your wager.',
-            cap: myScore,
-          });
+          setPhase('fj-intro');
+          phaseRoot.innerHTML = `
+            <div class="big-text-area">
+              <div class="big-text-eyebrow">FINAL JEOPARTY</div>
+              <div class="big-text-headline" style="color:var(--gold);font-size:36px;">HOW IT WORKS</div>
+              <div class="big-text-sub" style="margin-top:12px;">① Wager up to <strong style="color:var(--gold)">${dollars(myScore)}</strong></div>
+              <div class="big-text-sub">② The clue drops on the big screen</div>
+              <div class="big-text-sub">③ Type your answer — you have <strong style="color:var(--gold)">30 seconds</strong></div>
+              <div class="big-text-sub">④ Correct = +wager &nbsp;·&nbsp; Wrong = −wager</div>
+            </div>
+          `;
+          setFooter('Get ready…', { color: 'var(--gold)', pulse: true });
+          setTimeout(() => {
+            renderWagerInput({
+              mode: 'final',
+              eyebrow: 'FINAL JEOPARTY',
+              headline: 'Set your wager.',
+              cap: myScore,
+            });
+          }, 3500);
         }
 
         if (msg.type === 'FINAL_JEOPARDY_START') {

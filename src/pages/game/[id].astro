@@ -349,6 +349,76 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       a.volume = cfg.volume;
       audio[k] = a;
     }
+
+    /* ── Background music playlist ─────────────────────────────────────────── */
+    const BG_SRCS = [
+      '/sounds/bg_music/1.mp3',
+      '/sounds/bg_music/2.mp3',
+      '/sounds/bg_music/3.mp3',
+      '/sounds/bg_music/4.mp3',
+      '/sounds/bg_music/5.mp3',
+      '/sounds/bg_music/6.mp3',
+    ];
+    const BG_VOL = 0.3;
+    const bgPlaylist = (() => {
+      const els = BG_SRCS.map(src => { const a = new Audio(src); a.preload = 'auto'; a.volume = BG_VOL; return a; });
+      let curIdx = -1;
+      let running = false;
+      let fadeTimer = null;
+      function clearFade() { if (fadeTimer) { clearInterval(fadeTimer); fadeTimer = null; } }
+      function nextTrack() {
+        if (!running) return;
+        let idx;
+        do { idx = Math.floor(Math.random() * els.length); } while (idx === curIdx && els.length > 1);
+        curIdx = idx;
+        const a = els[idx];
+        a.currentTime = 0;
+        a.volume = BG_VOL;
+        a.onended = () => { if (running) nextTrack(); };
+        a.play().catch(() => {});
+      }
+      return {
+        prime: () => Promise.allSettled(els.map(a => { const w = a.muted; a.muted = true; return a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = w; }).catch(() => { a.muted = w; }); })),
+        isPlaying: () => curIdx >= 0 && !els[curIdx]?.paused,
+        stop() {
+          clearFade(); running = false; curIdx = -1;
+          els.forEach(a => { try { a.pause(); a.currentTime = 0; a.volume = BG_VOL; } catch {} });
+        },
+        fadeOut(ms = 1200) {
+          clearFade();
+          if (curIdx < 0) return;
+          const a = els[curIdx];
+          if (!a || a.paused) return;
+          const start = a.volume; let i = 0; const steps = 24;
+          fadeTimer = setInterval(() => {
+            i++; a.volume = Math.max(0, start * (1 - i / steps));
+            if (i >= steps) { clearFade(); a.pause(); a.volume = BG_VOL; }
+          }, ms / steps);
+        },
+        fadeIn(ms = 800) {
+          if (!audioEnabled) return;
+          clearFade(); running = true;
+          // Resume the paused track if there is one, otherwise start fresh
+          const cur = curIdx >= 0 ? els[curIdx] : null;
+          let target;
+          if (cur && cur.paused) {
+            cur.volume = 0; cur.play().catch(() => {}); target = cur;
+          } else {
+            let idx; do { idx = Math.floor(Math.random() * els.length); } while (idx === curIdx && els.length > 1);
+            curIdx = idx; target = els[idx];
+            target.currentTime = 0; target.volume = 0;
+            target.onended = () => { if (running) nextTrack(); };
+            target.play().catch(() => {});
+          }
+          let i = 0; const steps = 20;
+          fadeTimer = setInterval(() => {
+            i++; target.volume = Math.min(BG_VOL, BG_VOL * (i / steps));
+            if (i >= steps) clearFade();
+          }, ms / steps);
+        },
+      };
+    })();
+
     let audioEnabled = false;
     let soundEffectsEnabled = true; // updated from GAME_START message
     let awaitingIntro = false;
@@ -412,7 +482,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         a.muted = true;
         return a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = wasMuted; }).catch(() => { a.muted = wasMuted; });
       });
-      Promise.allSettled(primes).then(() => {
+      Promise.allSettled([...primes, bgPlaylist.prime()]).then(() => {
         audioEnabled = true;
         audioGate.classList.add('hidden');
         // If the game is already in lobby state, start the theme
@@ -509,6 +579,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         document.getElementById('qCategory').textContent = msg.categoryTitle + ' · ' + valLabel;
         document.getElementById('qText').textContent = msg.questionText;
         questionOverlay.classList.remove('hidden');
+        bgPlaylist.fadeOut(600);
         if (msg.isDailyDouble) playSound('dailyDouble');
       }
 
@@ -526,6 +597,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         questionOverlay.classList.add('hidden');
         buzzBanner.classList.add('hidden');
         highlightBuzzedPlayer(null);
+        bgPlaylist.fadeIn(1000);
       }
 
       if (msg.type === 'SCORE_UPDATE') {
@@ -544,11 +616,32 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       }
 
       if (msg.type === 'START_FINAL_JEOPARDY') {
-        questionOverlay.classList.add('hidden');
-        document.getElementById('qCategory').textContent =
-          msg.category ? `FINAL JEOPARDY · ${msg.category}` : 'FINAL JEOPARDY';
-        document.getElementById('qText').textContent = 'Players are entering their wagers…';
-        questionOverlay.classList.remove('hidden');
+        bgPlaylist.stop();
+        // Dramatic full-screen FJ announcement for a few seconds before showing the wager state
+        let fjAnnounce = document.getElementById('fjAnnounce');
+        if (!fjAnnounce) {
+          fjAnnounce = document.createElement('div');
+          fjAnnounce.id = 'fjAnnounce';
+          fjAnnounce.style.cssText = 'position:absolute;inset:0;background:#0d0a1e;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:80;text-align:center;gap:1.5rem;';
+          fjAnnounce.innerHTML = `
+            <div style="font-family:'Anton',sans-serif;font-size:2.8rem;color:var(--muted);letter-spacing:0.38em;text-transform:uppercase;">Final</div>
+            <div style="font-family:'Anton',sans-serif;font-size:9rem;color:var(--gold);letter-spacing:0.06em;line-height:1;text-shadow:0 0 60px rgba(255,200,61,0.5);">JEOPARTY</div>
+            ${msg.category ? `<div style="font-family:'Anton',sans-serif;font-size:2.4rem;color:var(--ink);letter-spacing:0.14em;margin-top:0.5rem;">${String(msg.category).toUpperCase()}</div>` : ''}
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:1.1rem;color:var(--dim);letter-spacing:0.18em;margin-top:1rem;">Players are setting their wagers…</div>
+          `;
+          document.getElementById('scale-root')?.appendChild(fjAnnounce);
+        } else {
+          fjAnnounce.style.display = 'flex';
+        }
+        // After 4 seconds, replace with the board question overlay
+        setTimeout(() => {
+          if (fjAnnounce) fjAnnounce.style.display = 'none';
+          questionOverlay.classList.add('hidden');
+          document.getElementById('qCategory').textContent =
+            msg.category ? `FINAL JEOPARTY · ${msg.category.toUpperCase()}` : 'FINAL JEOPARTY';
+          document.getElementById('qText').textContent = 'Players are entering their wagers…';
+          questionOverlay.classList.remove('hidden');
+        }, 4000);
       }
 
       if (msg.type === 'FINAL_JEOPARDY_START') {
@@ -577,6 +670,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         gameState.teams = msg.teams || gameState.teams;
         renderScores();
         questionOverlay.classList.add('hidden');
+        bgPlaylist.stop();
         stopSound('think');
         playSound('timesUp');
         showPresenterGameOver(msg);
@@ -855,6 +949,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
 
       // Render the board with its fill animation as the flash dissolves
       playSound('boardFill');
+      bgPlaylist.fadeIn(2500);
       renderBoard(true);
 
       requestAnimationFrame(() => {
@@ -901,9 +996,12 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       if (gameState.status === 'lobby' && audioEnabled && audio.theme.paused && !awaitingIntro) {
         playSound('theme');
       }
-      // If we land mid-game (page reload during active state), stop theme
+      // If we land mid-game (page reload during active state), stop theme and resume bg music
       if (gameState.status !== 'lobby' && audioEnabled && !audio.theme.paused && !awaitingIntro) {
         fadeOutSound('theme', 600);
+      }
+      if (gameState.status === 'active' && audioEnabled && !bgPlaylist.isPlaying() && !awaitingIntro) {
+        bgPlaylist.fadeIn(1500);
       }
 
       // Detect a round change mid-active (e.g. round 0 → 1) to trigger board re-fill

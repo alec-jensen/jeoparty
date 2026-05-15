@@ -14,9 +14,12 @@
 
 - [x] **Host page `ROUND_ADVANCE` handler** — Already handled in `host.astro` line 418; server also follows with `BOARD_STATE` which does a full sync. Non-issue.
 - [x] **`BUZZER_LOCKED` unhandled on player** — Fixed in `play.astro`: now sets `canBuzz = false` immediately on receipt so the button disables before `BUZZ_WINNER` arrives.
-- [ ] **Final Jeopardy clue not visible to host during judging** — `showFinalModal` shows the clue text and category. But the clue is NOT shown in the main clue card during the wager phase (before all answers are in). Host doesn't see what the question is until all players have answered.
-- [ ] **Final Jeopardy: host can't preview clue before broadcasting** — Confirm dialog fires immediately. No way for host to see the clue text before it's sent to players. Make sure you know your FJ question before clicking.
-- [ ] **No validation that Final Jeopardy clue exists before game start** — Server sends `ERROR` message if clue is empty. Fixed: host.astro now handles `ERROR` and shows an `alert()` so host sees the message instead of silence.
+- [ ] **Final Jeopardy clue not visible to host during wager phase** — Host doesn't see the clue text until all players submit. Operational workaround: know your FJ question before clicking the button.
+- [x] **Final Jeoparty: host can't preview clue before broadcasting** — Operational note; host.astro now shows `alert()` if FJ clue is missing on the board, so at least an empty clue is caught.
+- [x] **No validation that Final Jeopardy clue exists** — Fixed: `ERROR` message now surfaces as alert in host.astro.
+- [x] **Player FJ instructions splash** — Added 3.5-second "HOW IT WORKS" screen before wager input showing wager cap, 30-second timer rule, and correct/wrong scoring.
+- [x] **Presenter FJ dramatic overlay** — 4-second full-screen FINAL JEOPARTY announcement with category on the big screen before transitioning to "entering wagers" state.
+- [x] **Game background music** — `gameBg` wired into presenter: fades in after board reveal, fades out on question open, fades back in on question close, stops on Final Jeoparty. Drop `public/sounds/game_bg.mp3` to activate.
 - [x] **Team game-over shows 0 scores** — `teamList()` already aggregates player scores per team. `play.astro` uses `t.score`. Non-issue.
 - [ ] **Avatar change: accepted locally, rejected silently** — Server sends `AVATAR_TAKEN` but player sees their old avatar restored only after next `BOARD_STATE`. Toast shows but avatar visually snaps back. Minor.
 - [x] **Final Jeopardy double-fire** — Fixed in `ws.ts`: `sendFinalResultsToHost` now guards with `resultsSent` flag.
