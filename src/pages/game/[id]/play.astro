@@ -559,6 +559,19 @@ const initialPlayerId = payload?.playerId ?? '';
       0%, 100% { opacity: 1; transform: scale(1); }
       50%      { opacity: 0.4; transform: scale(0.7); }
     }
+    @keyframes go-row-in {
+      from { opacity: 0; transform: translateY(-20px) scale(0.94); }
+      to   { opacity: 1; transform: translateY(0)    scale(1); }
+    }
+    @keyframes go-champ-bounce {
+      0%   { transform: scale(1);    }
+      20%  { transform: scale(1.06) rotate(-2deg); }
+      40%  { transform: scale(1.08) rotate(2deg);  }
+      55%  { transform: scale(1.05) rotate(-1deg); }
+      70%  { transform: scale(1.07) rotate(1deg);  }
+      85%  { transform: scale(1.04) rotate(0deg);  }
+      100% { transform: scale(1);    }
+    }
   </style>
 </head>
 <body>
@@ -1051,43 +1064,70 @@ const initialPlayerId = payload?.playerId ?? '';
     function renderGameOver(winner) {
       hideClue();
       setPhase('lobby');
-      const items = gameState.teamMode && gameState.teams.length
+      // Sorted highest→lowest for rank numbering, lowest→highest for reveal order
+      const itemsDesc = (gameState.teamMode && gameState.teams.length
         ? gameState.teams.map((t) => ({ id: `team-${t.id}`, name: t.name, score: t.score ?? 0, isMe: false }))
-        : gameState.scores.map((s) => ({ id: s.playerId, name: s.displayName, score: s.score ?? 0, isMe: s.playerId === playerId }));
-      items.sort((a, b) => b.score - a.score);
+        : gameState.scores.map((s) => ({ id: s.playerId, name: s.displayName, score: s.score ?? 0, isMe: s.playerId === playerId }))
+      ).sort((a, b) => b.score - a.score);
 
       const champion = winner
         ? { name: winner.displayName, score: winner.score }
-        : items[0] || { name: 'Nobody', score: 0 };
-      const myRank = !gameState.teamMode ? items.findIndex((item) => item.id === playerId) + 1 : 0;
+        : itemsDesc[0] || { name: 'Nobody', score: 0 };
+      const myRank = !gameState.teamMode ? itemsDesc.findIndex((item) => item.id === playerId) + 1 : 0;
 
       phaseRoot.innerHTML = `
         <div class="final-wrap">
           <div class="lobby-eyebrow">FINAL SCORES</div>
-          <div class="final-champ">
+          <div class="final-champ" id="finalChamp" style="opacity:0;transition:opacity 0.5s ease;">
             <div class="final-champ-name">${String(champion.name || 'NOBODY').toUpperCase()}</div>
             <div class="final-champ-score">${dollars(champion.score || 0)}</div>
-            <div class="final-meta">${myRank > 0 ? `Your Place: #${myRank}` : `${items.length} TOTAL`}</div>
+            <div class="final-meta">${myRank > 0 ? `Your Place: #${myRank}` : `${itemsDesc.length} TOTAL`}</div>
           </div>
           <div class="final-list-wrap">
             <div class="final-list-head">Standings</div>
             <ul class="final-scores" id="finalScores"></ul>
           </div>
-          <button id="returnHomeBtn" class="join-btn" style="margin-top: 24px; font-size: 22px; padding: 16px 28px; width: auto;">← BACK TO HOME</button>
+          <button id="returnHomeBtn" class="join-btn" style="margin-top: 24px; font-size: 22px; padding: 16px 28px; width: auto; opacity:0; transition:opacity 0.4s ease;">← BACK TO HOME</button>
         </div>
       `;
 
+      // Fade in champion card first
+      setTimeout(() => {
+        const champ = document.getElementById('finalChamp');
+        if (champ) {
+          champ.style.opacity = '1';
+          champ.style.animation = 'go-champ-bounce 0.9s ease-in-out 0.3s 2';
+        }
+      }, 100);
+
+      // Reveal standings from lowest to highest
       const list = document.getElementById('finalScores');
-      items.forEach((item, idx) => {
-        const li = document.createElement('li');
-        li.className = `final-score-row${item.isMe ? ' me' : ''}`;
-        li.innerHTML = `
-          <span class="final-rank">${idx + 1}</span>
-          <span class="final-name">${item.name}</span>
-          <strong class="final-score${item.score < 0 ? ' negative' : ''}">${dollars(item.score)}</strong>
-        `;
-        list.appendChild(li);
+      const itemsAsc = [...itemsDesc].reverse();
+      const total = itemsAsc.length;
+      const step = total <= 5 ? 500 : total <= 10 ? 380 : 270;
+
+      itemsAsc.forEach((item, i) => {
+        const rank = total - i; // rank 1 = last shown (winner)
+        setTimeout(() => {
+          const li = document.createElement('li');
+          li.className = `final-score-row${item.isMe ? ' me' : ''}`;
+          li.style.animation = 'go-row-in 0.4s cubic-bezier(0.2,0.8,0.3,1.1) forwards';
+          li.innerHTML = `
+            <span class="final-rank">${rank}</span>
+            <span class="final-name">${item.name}</span>
+            <strong class="final-score${item.score < 0 ? ' negative' : ''}">${dollars(item.score)}</strong>
+          `;
+          list?.prepend(li);
+          if (i === total - 1) {
+            // Show back button after last entry
+            setTimeout(() => {
+              const btn = document.getElementById('returnHomeBtn');
+              if (btn) btn.style.opacity = '1';
+            }, 500);
+          }
+        }, 600 + i * step);
       });
+
       document.getElementById('returnHomeBtn')?.addEventListener('click', () => {
         location.href = '/';
       });

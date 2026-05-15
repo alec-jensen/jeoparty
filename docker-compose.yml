@@ -27,6 +27,7 @@ services:
       DATABASE_URL: mysql://jeoparty:jeoparty@db:3306/jeoparty
       JWT_SECRET: change-me-in-production
       PORT: "3000"
+      # PUBLIC_ORIGIN: "http://192.168.1.x:3000"  # set to your LAN IP or domain so the join QR/URL is correct
       # DISABLE_REGISTRATION: "true"
 
 volumes:

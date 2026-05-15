@@ -43,6 +43,17 @@ function normalizeHost(value: string | undefined, fallback: string): string {
 }
 
 export function getPublicOrigin(request: Request, fallbackUrl: URL): string {
+  // Explicit env var wins — required when accessing via localhost but players join via LAN/domain
+  const envOrigin = (process.env.PUBLIC_ORIGIN ?? '').trim();
+  if (envOrigin) {
+    try {
+      const u = new URL(envOrigin);
+      return `${u.protocol}//${u.host}`;
+    } catch {
+      // fall through to header detection
+    }
+  }
+
   const forwarded = parseForwardedHeader(request.headers.get('forwarded'));
   const headerProto = firstHeaderValue(request.headers.get('x-forwarded-proto'));
   const headerHost = firstHeaderValue(request.headers.get('x-forwarded-host'));

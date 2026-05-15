@@ -1,0 +1,213 @@
+---
+// Debug page for the game-over result animation.
+// Visit /debug/game-over to see the presenter animation.
+// Query params:
+//   ?mode=teams     — use team standings instead of players
+//   ?count=N        — number of entries (default 5)
+//   ?negative=1     — include some negative scores
+//   ?slow=1         — slower reveal (good for recording)
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Game Over Animation — Debug</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --gold: #FFC83D;
+      --dim:  #7B7099;
+      --ink:  #F4EEFF;
+      --line: rgba(255,255,255,0.1);
+      --bg2:  rgba(255,255,255,0.04);
+      --red:  #FF5C5C;
+    }
+    html, body { height: 100%; margin: 0; background: #0E0B22; overflow: hidden; font-family: sans-serif; }
+
+    #stage {
+      position: fixed; inset: 0;
+      background: radial-gradient(ellipse at 50% 50%, #1F1947 0%, #0E0B22 70%);
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    #controls {
+      position: fixed; top: 12px; left: 12px; z-index: 100;
+      display: flex; gap: 8px; align-items: center;
+    }
+    #controls button {
+      font-family: 'Anton', sans-serif; font-size: 0.85rem; letter-spacing: 0.08em;
+      background: var(--gold); color: #0E0B22; border: none;
+      padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    }
+    #controls button.secondary {
+      background: rgba(255,255,255,0.1); color: var(--ink);
+    }
+    #controls button:hover { filter: brightness(1.1); }
+
+    /* ── Game over reveal animations ─────────────────────────────────── */
+    @keyframes go-slide-in {
+      from { opacity: 0; transform: translateY(-36px) scale(0.9); }
+      to   { opacity: 1; transform: translateY(0)    scale(1);   }
+    }
+    @keyframes go-winner-dance {
+      0%   { transform: scale(1);            }
+      12%  { transform: scale(1.07) rotate(-3deg);   }
+      25%  { transform: scale(1.09) rotate(3deg);    }
+      37%  { transform: scale(1.06) rotate(-2deg);   }
+      50%  { transform: scale(1.09) rotate(2.5deg);  }
+      62%  { transform: scale(1.06) rotate(-1.5deg); }
+      75%  { transform: scale(1.08) rotate(1.5deg);  }
+      87%  { transform: scale(1.05) rotate(-0.5deg); }
+      100% { transform: scale(1);            }
+    }
+    @keyframes go-winner-glow {
+      0%, 100% { box-shadow: 0 0 24px rgba(255,200,61,0.25), 0 8px 0 #B88A1F; }
+      50%       { box-shadow: 0 0 70px rgba(255,200,61,0.65), 0 8px 0 #B88A1F; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <button id="replayBtn">↺ Replay</button>
+  <button class="secondary" id="toggleMode">Switch to Teams</button>
+</div>
+
+<div id="stage"></div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const count    = Math.min(20, Math.max(2, parseInt(params.get('count') || '5', 10)));
+  const negative = params.has('negative');
+  const slow     = params.has('slow');
+  let useTeams   = params.get('mode') === 'teams';
+
+  const PLAYER_NAMES = [
+    'ZEPHYR', 'MAVERICK', 'COSMOS', 'NOVA', 'RIGEL',
+    'AURORA', 'BLAZE', 'CIPHER', 'DUSK', 'ECHO',
+    'FENIX', 'GLYPH', 'HALO', 'IRIS', 'JINX',
+    'KOVA', 'LUMEN', 'MYST', 'NEON', 'ORBIT',
+  ];
+  const TEAM_NAMES = [
+    'The Trivia Titans', 'Brain Squad', 'Quiz Whizzes',
+    'Fact Finders', 'The Know-It-Alls', 'Wild Guessers',
+    'Smarty Panthers', 'The Overthunkers', 'Lucky Guessers',
+    'Final Answer Club',
+  ];
+
+  function makeStandings() {
+    const names = useTeams ? TEAM_NAMES : PLAYER_NAMES;
+    const entries = names.slice(0, count).map((name, i) => {
+      const base = (i + 1) * 400 + Math.floor(Math.random() * 300);
+      const score = negative && i < 2 ? -base : base * (count - i);
+      return { name, score };
+    });
+    // Shuffle a bit so scores aren't perfectly ordered
+    entries.sort(() => Math.random() - 0.5);
+    return entries;
+  }
+
+  function dollars(n) {
+    return `${n < 0 ? '-$' : '$'}${Math.abs(n).toLocaleString()}`;
+  }
+
+  function run(standings) {
+    const stage = document.getElementById('stage');
+    stage.innerHTML = '';
+
+    const over = document.createElement('div');
+    over.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.5rem;text-align:center;';
+    stage.appendChild(over);
+
+    // Sort lowest → highest so winner is last
+    const sorted = [...standings].sort((a, b) => a.score - b.score);
+    const total = sorted.length;
+
+    over.innerHTML = `
+      <div style="width:min(92vw,1260px);max-height:94vh;display:flex;flex-direction:column;align-items:center;gap:1.2rem;padding:1rem 0.5rem;overflow:hidden;">
+        <div id="goTitle" style="font-family:'Anton',sans-serif;font-size:2.2rem;color:var(--dim);letter-spacing:0.26em;opacity:0;transition:opacity 0.6s ease;">GAME OVER</div>
+        <div id="goList" style="width:min(980px,100%);display:flex;flex-direction:column;gap:0.5rem;overflow:visible;"></div>
+        <button id="presenterHomeBtn" style="opacity:0;transition:opacity 0.5s ease 0.3s;font-family:'Anton',sans-serif;font-size:1.35rem;background:var(--gold);color:#0E0B22;border:none;padding:0.95rem 2.2rem;border-radius:999px;cursor:pointer;letter-spacing:0.08em;box-shadow:0 12px 0 #B88A1F,0 22px 40px rgba(255,200,61,0.25);">← BACK TO HOME</button>
+      </div>
+    `;
+
+    requestAnimationFrame(() => {
+      const title = document.getElementById('goTitle');
+      if (title) title.style.opacity = '1';
+    });
+
+    const list = document.getElementById('goList');
+    const initDelay = 400;
+    const step = slow ? 1200 : (total <= 6 ? 750 : total <= 12 ? 550 : 380);
+
+    sorted.forEach((entry, i) => {
+      const isWinner = i === total - 1;
+      const rank = total - i;
+
+      setTimeout(() => {
+        const row = document.createElement('div');
+
+        if (isWinner) {
+          row.style.cssText = [
+            'display:grid;grid-template-columns:56px 1fr auto;align-items:center;gap:1rem;',
+            'padding:1.1rem 1.4rem;border-radius:16px;',
+            'border:2px solid var(--gold);',
+            'background:linear-gradient(135deg,rgba(255,200,61,0.2) 0%,rgba(124,92,255,0.18) 100%);',
+            "font-family:'Anton',sans-serif;letter-spacing:0.03em;",
+            'animation:go-slide-in 0.5s cubic-bezier(0.2,0.8,0.3,1.1) forwards;',
+          ].join('');
+          row.innerHTML = `
+            <span style="font-size:2rem;text-align:center;display:block;">🏆</span>
+            <span style="font-size:clamp(1.4rem,3vw,2rem);color:var(--gold);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${entry.name.toUpperCase()}</span>
+            <span style="font-size:clamp(1.2rem,2.6vw,1.7rem);color:var(--gold);">${dollars(entry.score)}</span>
+          `;
+          list?.prepend(row);
+
+          setTimeout(() => {
+            row.style.animation = 'go-winner-dance 1s ease-in-out 3, go-winner-glow 2.2s ease-in-out 0.5s infinite';
+          }, 600);
+
+          setTimeout(() => {
+            const btn = document.getElementById('presenterHomeBtn');
+            if (btn) btn.style.opacity = '1';
+          }, 1400);
+        } else {
+          row.style.cssText = [
+            'display:grid;grid-template-columns:48px 1fr auto;align-items:center;gap:0.9rem;',
+            'padding:0.7rem 1.1rem;border-radius:12px;',
+            'border:1px solid var(--line);background:var(--bg2);',
+            "font-family:'Anton',sans-serif;letter-spacing:0.03em;",
+            'animation:go-slide-in 0.45s cubic-bezier(0.2,0.8,0.3,1.1) forwards;',
+          ].join('');
+          row.innerHTML = `
+            <span style="font-size:1rem;color:var(--dim);text-align:center;">${rank}</span>
+            <span style="font-size:clamp(0.95rem,2.1vw,1.25rem);color:var(--ink);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${entry.name.toUpperCase()}</span>
+            <span style="font-size:clamp(0.9rem,1.9vw,1.15rem);color:${entry.score < 0 ? 'var(--red)' : 'var(--gold)'};">${dollars(entry.score)}</span>
+          `;
+          list?.prepend(row);
+        }
+      }, initDelay + i * step);
+    });
+
+    document.getElementById('presenterHomeBtn')?.addEventListener('click', () => { location.href = '/'; });
+  }
+
+  let currentStandings = makeStandings();
+  run(currentStandings);
+
+  document.getElementById('replayBtn').addEventListener('click', () => {
+    currentStandings = makeStandings();
+    run(currentStandings);
+  });
+
+  document.getElementById('toggleMode').addEventListener('click', () => {
+    useTeams = !useTeams;
+    document.getElementById('toggleMode').textContent = useTeams ? 'Switch to Players' : 'Switch to Teams';
+    currentStandings = makeStandings();
+    run(currentStandings);
+  });
+</script>
+
+</body>
+</html>
