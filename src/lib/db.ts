@@ -30,17 +30,21 @@ async function createDbInstance() {
     instance = drizzle(createPool(url), { schema: mysqlSchema, mode: 'default' });
   }
 
-  // Auto-sync schema on startup
-  try {
-    const { execSync } = await import('node:child_process');
-    process.stdout.write('Syncing database schema... ');
-    execSync('npx drizzle-kit push', { 
-      stdio: 'ignore',
-      env: { ...process.env, DATABASE_URL: url }
-    });
-    process.stdout.write('✓\n');
-  } catch {
-    // Schema push may fail on some deployments; not critical
+  // Auto-sync schema on startup — guard with process.env so it only runs once
+  // even if this module is evaluated multiple times in the same process (Vite SSR quirk)
+  if (!process.env.__JEOPARTY_DB_SYNCED) {
+    process.env.__JEOPARTY_DB_SYNCED = '1';
+    try {
+      const { execSync } = await import('node:child_process');
+      process.stdout.write('Syncing database schema... ');
+      execSync('npx drizzle-kit push', {
+        stdio: 'ignore',
+        env: { ...process.env, DATABASE_URL: url }
+      });
+      process.stdout.write('✓\n');
+    } catch {
+      // Schema push may fail on some deployments; not critical
+    }
   }
 
   return instance;

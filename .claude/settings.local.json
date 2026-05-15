@@ -8,7 +8,9 @@
       "WebFetch(domain:en.wikipedia.org)",
       "WebFetch(domain:www.jeopardy.com)",
       "mcp__Claude_in_Chrome__navigate",
-      "mcp__Claude_in_Chrome__tabs_context_mcp"
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "mcp__Claude_in_Chrome__list_connected_browsers",
+      "mcp__Claude_in_Chrome__select_browser"
     ]
   }
 }

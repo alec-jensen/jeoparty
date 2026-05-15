@@ -819,8 +819,8 @@ export function initWebSockets(server: import('node:http').Server) {
         if (data.type === 'CHANGE_AVATAR' && current.status === 'lobby') {
           const player = current.players.get(meta.playerId);
           if (!player) return;
-          const newColor = Math.max(0, Math.min(5, Number.isFinite(Number(data.avatarColor)) ? Math.floor(Number(data.avatarColor)) : player.avatarColor));
-          const newShape = Math.max(0, Math.min(5, Number.isFinite(Number(data.avatarShape)) ? Math.floor(Number(data.avatarShape)) : player.avatarShape));
+          const newColor = Math.max(0, Math.min(5,  Number.isFinite(Number(data.avatarColor)) ? Math.floor(Number(data.avatarColor)) : player.avatarColor));
+          const newShape = Math.max(0, Math.min(17, Number.isFinite(Number(data.avatarShape)) ? Math.floor(Number(data.avatarShape)) : player.avatarShape));
           // Check uniqueness
           const taken = Array.from(current.players.entries())
             .filter(([id]) => id !== meta.playerId)

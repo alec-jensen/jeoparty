@@ -4,6 +4,14 @@ import { issuePlayerToken, PLAYER_COOKIE } from '@/lib/auth';
 import { db, schema } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 
+export const GET: APIRoute = async ({ params }) => {
+  const gameId = String(params.id).toUpperCase();
+  const rows = await db.select({ avatarColor: schema.players.avatarColor, avatarShape: schema.players.avatarShape })
+    .from(schema.players).where(eq(schema.players.gameId, gameId));
+  const taken = rows.map(r => ({ avatarColor: r.avatarColor ?? 0, avatarShape: r.avatarShape ?? 0 }));
+  return new Response(JSON.stringify({ taken }), { status: 200, headers: { 'content-type': 'application/json' } });
+};
+
 export const POST: APIRoute = async ({ request, params, cookies }) => {
   const gameId = String(params.id).toUpperCase();
   const body = await request.json();
@@ -11,8 +19,8 @@ export const POST: APIRoute = async ({ request, params, cookies }) => {
   const name = String(displayName || '').trim();
   if (!name || name.length > 64) return new Response(JSON.stringify({ error: 'Display name is required (max 64 chars).' }), { status: 400 });
 
-  const avatarColor = Math.max(0, Math.min(5, Number.isFinite(Number(rawColor)) ? Math.floor(Number(rawColor)) : 0));
-  const avatarShape = Math.max(0, Math.min(5, Number.isFinite(Number(rawShape)) ? Math.floor(Number(rawShape)) : 0));
+  const avatarColor = Math.max(0, Math.min(5,  Number.isFinite(Number(rawColor)) ? Math.floor(Number(rawColor)) : 0));
+  const avatarShape = Math.max(0, Math.min(17, Number.isFinite(Number(rawShape)) ? Math.floor(Number(rawShape)) : 0));
 
   const gameRows = await db.select({ id: schema.games.id, status: schema.games.status })
     .from(schema.games).where(eq(schema.games.id, gameId));
@@ -30,9 +38,9 @@ export const POST: APIRoute = async ({ request, params, cookies }) => {
   let finalShape = avatarShape;
   const takenCombos = new Set(existingPlayers.map(p => `${p.avatarColor ?? 0}:${p.avatarShape ?? 0}`));
   if (takenCombos.has(`${finalColor}:${finalShape}`)) {
-    // Find the next available combination
+    // Find the next available combination (6 colors × 24 shapes = 144 combos)
     outer: for (let c = 0; c < 6; c++) {
-      for (let s = 0; s < 6; s++) {
+      for (let s = 0; s < 18; s++) {
         if (!takenCombos.has(`${c}:${s}`)) { finalColor = c; finalShape = s; break outer; }
       }
     }
