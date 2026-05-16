@@ -438,9 +438,9 @@ const seed = {
       } else if (msg.type === 'FINAL_JEOPARDY_REVEAL') {
         showFinalModal(msg);
       } else if (msg.type === 'FINAL_RESPONSE_REVEAL') {
-        // Reflect newly-revealed state in the modal if open
-        finalState.revealed[msg.playerId] = true;
-        renderFinalResponses();
+        if (finalState) { finalState.revealed[msg.playerId] = true; renderFinalResponses(); }
+      } else if (msg.type === 'FINAL_REVEAL_SEQUENCE') {
+        if (finalState) { finalState.revealStarted = true; renderFinalResponses(); }
       }
     }
 
@@ -766,11 +766,18 @@ const seed = {
     document.getElementById('startGameBtn').onclick = () => ws.send(JSON.stringify({ type: 'GAME_START' }));
     document.getElementById('nextRoundBtn').onclick = () => {
       const isLastRound = (currentRound + 1) >= rounds.length;
+      // Count unanswered questions on the current board
+      const currentQs = rounds[currentRound]?.categories.flatMap(c => c.questions) ?? [];
+      const remaining = currentQs.filter(q => !usedSet.has(q.id)).length;
       if (isLastRound) {
-        if (confirm('Start Final Jeoparty?')) {
+        const msg = remaining > 0
+          ? `${remaining} clue${remaining === 1 ? '' : 's'} left on the board. Start Final Jeoparty anyway?`
+          : 'Start Final Jeoparty?';
+        if (confirm(msg)) {
           ws.send(JSON.stringify({ type: 'START_FINAL_JEOPARDY' }));
         }
       } else {
+        if (remaining > 0 && !confirm(`${remaining} clue${remaining === 1 ? '' : 's'} left on the board. Advance to the next round anyway?`)) return;
         ws.send(JSON.stringify({ type: 'ADVANCE_ROUND' }));
       }
     };
@@ -822,6 +829,7 @@ const seed = {
         results: msg.results || [],
         judgments: {},
         revealed: {},
+        revealStarted: false,
         category: msg.category || '',
         questionText: msg.questionText || '',
         correctAnswer: msg.correctAnswer || '',
@@ -835,31 +843,65 @@ const seed = {
     function renderFinalResponses() {
       const list = document.getElementById('finalResponseList');
       list.innerHTML = '';
+      const revealStarted = !!finalState.revealStarted;
+      const allJudged = finalState.results.length > 0 &&
+        finalState.results.every((r) => finalState.judgments[r.playerId] !== undefined);
+
       finalState.results.forEach((r) => {
         const j = finalState.judgments[r.playerId];
         const revealed = !!finalState.revealed[r.playerId];
+        const judgedColor = j === true ? 'var(--mint)' : j === false ? 'var(--red)' : 'var(--ink)';
+        const statusLabel = revealed ? 'REVEALED ✓' : j === true ? 'CORRECT' : j === false ? 'WRONG' : 'PENDING';
         const row = document.createElement('div');
         row.style.cssText = 'background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px;';
-        const judgedColor = j === true ? 'var(--mint)' : j === false ? 'var(--red)' : 'var(--ink)';
         row.innerHTML = `
-          <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
             <div>
-              <div style="font-family: 'Anton', sans-serif; font-size: 18px; color: ${judgedColor};">${r.displayName.toUpperCase()}</div>
-              <div style="font-size: 13px; color: var(--dim);">Wager: $${(r.wager || 0).toLocaleString()}</div>
+              <div style="font-family:'Anton',sans-serif;font-size:18px;color:${judgedColor};">${r.displayName.toUpperCase()}</div>
+              <div style="font-size:13px;color:var(--dim);">Wager: $${(r.wager || 0).toLocaleString()}</div>
             </div>
-            <div style="font-size: 11px; letter-spacing: 0.18em; color: var(--dim);">${revealed ? 'REVEALED ✓' : j === true ? 'CORRECT' : j === false ? 'WRONG' : 'PENDING'}</div>
+            <div style="font-size:11px;letter-spacing:0.18em;color:var(--dim);">${statusLabel}</div>
           </div>
-          <div style="font-family: 'Space Grotesk', sans-serif; font-size: 16px; color: var(--ink); background: var(--bg); border-radius: 8px; padding: 10px 14px; min-height: 36px;">
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:16px;color:var(--ink);background:var(--bg);border-radius:8px;padding:10px 14px;min-height:36px;">
             ${(r.answer || '— no response —').replace(/</g, '&lt;')}
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button data-act="wrong" data-pid="${r.playerId}" ${revealed ? 'disabled' : ''} style="flex:1; padding: 10px; background: ${j === false ? 'var(--red)' : 'transparent'}; color: ${j === false ? '#0E0B22' : 'var(--red)'}; border: 1.5px solid var(--red); border-radius: 8px; font-family: 'Anton', sans-serif; letter-spacing: 0.1em; cursor: pointer;">✕ WRONG</button>
-            <button data-act="right" data-pid="${r.playerId}" ${revealed ? 'disabled' : ''} style="flex:1; padding: 10px; background: ${j === true ? 'var(--mint)' : 'transparent'}; color: ${j === true ? '#0E0B22' : 'var(--mint)'}; border: 1.5px solid var(--mint); border-radius: 8px; font-family: 'Anton', sans-serif; letter-spacing: 0.1em; cursor: pointer;">✓ CORRECT</button>
-            <button data-act="reveal" data-pid="${r.playerId}" ${j === undefined || revealed ? 'disabled' : ''} style="flex:1.4; padding: 10px; background: var(--gold); color: #0E0B22; border: none; border-radius: 8px; font-family: 'Anton', sans-serif; letter-spacing: 0.1em; cursor: pointer; opacity: ${j === undefined || revealed ? 0.4 : 1};">REVEAL →</button>
+          <div style="display:flex;gap:8px;">
+            <button data-act="wrong" data-pid="${r.playerId}"
+              ${revealStarted || revealed ? 'disabled' : ''}
+              style="flex:1;padding:10px;background:${j === false ? 'var(--red)' : 'transparent'};color:${j === false ? '#0E0B22' : 'var(--red)'};border:1.5px solid var(--red);border-radius:8px;font-family:'Anton',sans-serif;letter-spacing:0.1em;cursor:pointer;">✕ WRONG</button>
+            <button data-act="right" data-pid="${r.playerId}"
+              ${revealStarted || revealed ? 'disabled' : ''}
+              style="flex:1;padding:10px;background:${j === true ? 'var(--mint)' : 'transparent'};color:${j === true ? '#0E0B22' : 'var(--mint)'};border:1.5px solid var(--mint);border-radius:8px;font-family:'Anton',sans-serif;letter-spacing:0.1em;cursor:pointer;">✓ CORRECT</button>
           </div>
         `;
         list.appendChild(row);
       });
+
+      // Single "REVEAL ALL" button — appears once all players are judged
+      if (allJudged && !revealStarted) {
+        const wrongCount = finalState.results.filter((r) => finalState.judgments[r.playerId] === false).length;
+        const hint = document.createElement('div');
+        hint.style.cssText = 'font-size:11px;color:var(--dim);letter-spacing:0.14em;text-align:center;margin-top:4px;';
+        hint.textContent = `Wrong answers first (${wrongCount}), then correct`;
+        list.appendChild(hint);
+        const btn = document.createElement('button');
+        btn.textContent = 'REVEAL ALL →';
+        btn.style.cssText = 'width:100%;margin-top:8px;padding:16px;background:var(--gold);color:#0E0B22;border:none;border-radius:10px;font-family:"Anton",sans-serif;font-size:20px;letter-spacing:0.1em;cursor:pointer;';
+        btn.addEventListener('click', () => {
+          finalState.revealStarted = true;
+          ws.send(JSON.stringify({ type: 'START_FINAL_REVEAL' }));
+          renderFinalResponses();
+        });
+        list.appendChild(btn);
+      } else if (revealStarted) {
+        const revealed = finalState.results.filter((r) => finalState.revealed[r.playerId]).length;
+        const total = finalState.results.length;
+        const prog = document.createElement('div');
+        prog.style.cssText = 'text-align:center;padding:14px;color:var(--dim);font-size:13px;letter-spacing:0.12em;';
+        prog.textContent = revealed < total ? `Revealing… ${revealed} / ${total}` : 'All revealed ✓';
+        list.appendChild(prog);
+      }
+
       list.querySelectorAll('button[data-act]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const pid = btn.dataset.pid;
@@ -867,10 +909,6 @@ const seed = {
           if (act === 'wrong' || act === 'right') {
             finalState.judgments[pid] = act === 'right';
             ws.send(JSON.stringify({ type: 'JUDGE_FINAL', playerId: pid, correct: act === 'right' }));
-            renderFinalResponses();
-          } else if (act === 'reveal') {
-            finalState.revealed[pid] = true;
-            ws.send(JSON.stringify({ type: 'REVEAL_FINAL_RESPONSE', playerId: pid }));
             renderFinalResponses();
           }
         });

@@ -750,6 +750,20 @@ const initialPlayerId = payload?.playerId ?? '';
       takenAvatars = taken;
     }
 
+    // Helper: pick a random untaken combo (excluding `exclude` index if alternatives exist)
+    function randomAvailable(exclude = -1) {
+      const avail = [];
+      for (let c = 0; c < NUM_C; c++)
+        for (let o = 0; o < NUM_O; o++)
+          for (let gi = 0; gi < NUM_I; gi++) {
+            const s = o * NUM_I + gi;
+            if (!takenAvatars.has(takenKey(c, s))) avail.push(c * NUM_O * NUM_I + s);
+          }
+      if (!avail.length) return firstAvailable(takenAvatars); // absolute fallback
+      const pool = avail.filter(x => x !== exclude);
+      return (pool.length ? pool : avail)[Math.floor(Math.random() * (pool.length || avail.length))];
+    }
+
     // Prefetch taken combos before the player picks
     fetch(`/api/games/${gameId}/join`)
       .then(r => r.json())
@@ -760,9 +774,9 @@ const initialPlayerId = payload?.playerId ?? '';
         const preferred = saved != null ? Math.max(0, Math.min(NUM_COMBOS - 1, parseInt(saved, 10) || 0)) : null;
         if (preferred != null) {
           const pd = comboToDb(preferred);
-          avatarIdx = !takenAvatars.has(takenKey(pd.avatarColor, pd.avatarShape)) ? preferred : firstAvailable(takenAvatars);
+          avatarIdx = !takenAvatars.has(takenKey(pd.avatarColor, pd.avatarShape)) ? preferred : randomAvailable(preferred);
         } else {
-          avatarIdx = firstAvailable(takenAvatars);
+          avatarIdx = randomAvailable();
         }
         applyAvatar(avatarIdx);
       })
@@ -1432,11 +1446,19 @@ const initialPlayerId = payload?.playerId ?? '';
         }
 
         if (msg.type === 'AVATAR_TAKEN') {
-          // Server rejected — jump to the first color nobody else has
-          avatarIdx = firstAvailable(takenAvatars);
+          // Server rejected — pick a random untaken combo instead of incrementing
+          const avail = [];
+          for (let c = 0; c < NUM_C; c++)
+            for (let o = 0; o < NUM_O; o++)
+              for (let gi = 0; gi < NUM_I; gi++) {
+                const s = o * NUM_I + gi;
+                if (!takenAvatars.has(takenKey(c, s))) avail.push(c * NUM_O * NUM_I + s);
+              }
+          const pool = avail.filter(x => x !== avatarIdx);
+          avatarIdx = (pool.length ? pool : avail.length ? avail : [avatarIdx])[Math.floor(Math.random() * (pool.length || avail.length || 1))];
           applyAvatar(avatarIdx);
           try { localStorage.setItem('jp.avatar', String(avatarIdx)); } catch {}
-          setFooter('That color is taken — tap to try another.', { color: 'var(--red)' });
+          setFooter('That style is taken — tap to try another.', { color: 'var(--red)' });
           setTimeout(() => setFooter(`Connected · room ${gameId}`, { color: 'var(--mint)' }), 3000);
         }
 

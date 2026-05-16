@@ -655,7 +655,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         } else {
           fjAnnounce.style.display = 'flex';
         }
-        // After 4 seconds, replace with the board question overlay
+        // After 10 seconds, replace with the board question overlay
         setTimeout(() => {
           if (fjAnnounce) fjAnnounce.style.display = 'none';
           questionOverlay.classList.add('hidden');
@@ -663,7 +663,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
             msg.category ? `FINAL JEOPARTY · ${msg.category.toUpperCase()}` : 'FINAL JEOPARTY';
           document.getElementById('qText').textContent = 'Players are entering their wagers…';
           questionOverlay.classList.remove('hidden');
-        }, 4000);
+        }, 10000);
       }
 
       if (msg.type === 'FINAL_JEOPARDY_START') {
@@ -671,20 +671,149 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
           msg.category ? `FINAL JEOPARDY · ${msg.category}` : 'FINAL JEOPARDY';
         document.getElementById('qText').textContent = msg.questionText;
         playSound('think');
+
+        // Inject countdown styles once
+        if (!document.getElementById('fj-countdown-style')) {
+          const cs = document.createElement('style');
+          cs.id = 'fj-countdown-style';
+          cs.textContent = `
+            @keyframes fjTickPulse { 0%{transform:scale(1)} 8%{transform:scale(1.12)} 16%{transform:scale(1)} }
+            @keyframes fjCountIn   { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+            #fjCountdown { animation: fjCountIn .4s ease both; }
+            #fjCountdown.urgent { color: #FF4D4D !important; text-shadow: 0 0 24px rgba(255,77,77,.7); }
+            #fjCountdown .fj-tick { display:inline-block; animation: fjTickPulse .4s ease; }
+          `;
+          document.head.appendChild(cs);
+        }
+
+        // Remove any existing countdown
+        document.getElementById('fjCountdown')?.remove();
+
+        // Build countdown element
+        const cdEl = document.createElement('div');
+        cdEl.id = 'fjCountdown';
+        cdEl.style.cssText = [
+          'position:absolute',
+          'bottom:48px',
+          'right:60px',
+          'font-family:"Anton",sans-serif',
+          'font-size:7rem',
+          'color:#F0C040',
+          'text-shadow:0 4px 20px rgba(0,0,0,.6)',
+          'line-height:1',
+          'letter-spacing:.02em',
+          'z-index:15',
+          'pointer-events:none',
+          'user-select:none',
+        ].join(';');
+        // Append to scale-root so position is relative to the full presenter canvas,
+        // not the question overlay (whose position:absolute we must not override).
+        document.getElementById('scale-root')?.appendChild(cdEl);
+
+        let remaining = 30;
+        function updateCd() {
+          cdEl.innerHTML = `<span class="fj-tick">${remaining}</span>`;
+          if (remaining <= 10) cdEl.classList.add('urgent');
+          // Re-trigger pulse by replacing node
+          const tick = cdEl.querySelector('.fj-tick');
+          if (tick) {
+            tick.style.animation = 'none';
+            tick.getBoundingClientRect(); // force reflow
+            tick.style.animation = '';
+          }
+        }
+        updateCd();
+        window._fjCountdownTimer = setInterval(() => {
+          remaining--;
+          if (remaining < 0) {
+            clearInterval(window._fjCountdownTimer);
+            cdEl.remove();
+            return;
+          }
+          updateCd();
+        }, 1000);
       }
 
       if (msg.type === 'FINAL_RESPONSE_REVEAL') {
         stopSound('think');
-        // Dramatic reveal: replace the question text with the player's response
-        document.getElementById('qCategory').textContent =
-          `${msg.displayName.toUpperCase()} · ${msg.correct ? '✓' : '✗'} ${msg.wager < 0 ? '-' : ''}$${Math.abs(msg.wager).toLocaleString()}`;
-        document.getElementById('qText').textContent = msg.answer || '— no response —';
-        questionOverlay.classList.remove('hidden');
-        playSound(msg.correct ? 'correct' : 'incorrect');
-        // Update score on the scoreboard
-        const s = gameState.scores.find((x) => x.playerId === msg.playerId);
-        if (s) s.score = msg.newScore;
-        renderScores();
+        // Kill countdown if still running
+        if (window._fjCountdownTimer) { clearInterval(window._fjCountdownTimer); window._fjCountdownTimer = null; }
+        document.getElementById('fjCountdown')?.remove();
+
+        // Inject animation styles once
+        if (!document.getElementById('fj-reveal-style')) {
+          const st = document.createElement('style');
+          st.id = 'fj-reveal-style';
+          st.textContent = `
+            @keyframes fjCardIn  { from{transform:translateY(110%) scale(.92);opacity:0} to{transform:translateY(0) scale(1);opacity:1} }
+            @keyframes fjCardOut { from{transform:scale(1);opacity:1} to{transform:scale(.95);opacity:0} }
+            @keyframes fjFadeIn  { from{opacity:0;filter:blur(10px)} to{opacity:1;filter:blur(0)} }
+            @keyframes fjBadge   { 0%{transform:scaleY(0);opacity:0} 70%{transform:scaleY(1.1)} 100%{transform:scaleY(1);opacity:1} }
+            @keyframes fjScore   { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+            .fj-card-enter  { animation: fjCardIn  .65s cubic-bezier(.22,1,.36,1) forwards; }
+            .fj-card-leave  { animation: fjCardOut .7s ease-in forwards; }
+            .fj-answer-show { animation: fjFadeIn  .9s ease .7s both; }
+            .fj-badge-show  { animation: fjBadge   .5s cubic-bezier(.34,1.56,.64,1) both; }
+            .fj-score-show  { animation: fjScore   .6s ease both; }
+          `;
+          document.head.appendChild(st);
+        }
+
+        // Resolve avatar appearance
+        const av = avFromDb(msg.avatarColor ?? 0, msg.avatarShape ?? 0);
+        const shapeCSS = av.clipPath ? `clip-path:${av.clipPath}` : `border-radius:${av.radius || '50%'}`;
+        const resultColor = msg.correct ? '#5EEBC1' : '#FF4D4D';
+        const resultLabel = msg.correct ? '✓  CORRECT' : '✗  WRONG';
+        const scoreDir   = msg.correct ? `+$${msg.wager.toLocaleString()}` : `-$${msg.wager.toLocaleString()}`;
+
+        // Update scoreboard data
+        const scoreLine = gameState.scores.find((x) => x.playerId === msg.playerId);
+        if (scoreLine) scoreLine.score = msg.newScore;
+
+        // Build or reuse the reveal overlay
+        let overlay = document.getElementById('fjRevealOverlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = 'fjRevealOverlay';
+          overlay.style.cssText = 'position:absolute;inset:0;z-index:85;display:flex;align-items:center;justify-content:center;background:rgba(14,11,34,.82);';
+          document.getElementById('scale-root')?.appendChild(overlay);
+        }
+        overlay.style.display = 'flex';
+        overlay.style.opacity = '1';
+        overlay.style.transition = '';
+        overlay.innerHTML = `
+          <div class="fj-card-enter" style="background:linear-gradient(150deg,#1c1847,#110e2e);border:2px solid rgba(255,255,255,.1);border-radius:28px;padding:48px 72px;display:flex;flex-direction:column;align-items:center;gap:28px;min-width:640px;max-width:860px;box-shadow:0 48px 96px rgba(0,0,0,.7);">
+            <div style="display:flex;align-items:center;gap:22px;">
+              <div style="width:90px;height:90px;background:${av.bg};${shapeCSS};display:flex;align-items:center;justify-content:center;font-size:48px;line-height:1;color:#0E0B22;font-family:'Anton',sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.5);flex-shrink:0;">${av.glyph}</div>
+              <div style="font-family:'Anton',sans-serif;font-size:3.8rem;color:#fff;letter-spacing:.04em;">${msg.displayName.toUpperCase()}</div>
+            </div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:1rem;color:rgba(255,255,255,.38);letter-spacing:.2em;text-transform:uppercase;">Wagered $${msg.wager.toLocaleString()}</div>
+            <div class="fj-answer-show" style="background:rgba(255,255,255,.07);border-radius:18px;padding:26px 40px;width:100%;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:2.1rem;color:#fff;min-height:80px;display:flex;align-items:center;justify-content:center;font-style:italic;">
+              "${(msg.answer || '— no response —').replace(/</g,'&lt;')}"
+            </div>
+            <div id="fjResultBadge" style="opacity:0;">
+              <div style="background:${resultColor};border-radius:14px;padding:18px 56px;font-family:'Anton',sans-serif;font-size:3rem;color:#0E0B22;letter-spacing:.1em;">${resultLabel}</div>
+            </div>
+            <div id="fjScoreChange" style="opacity:0;font-family:'Anton',sans-serif;font-size:2rem;color:${resultColor};letter-spacing:.08em;">${scoreDir} → $${msg.newScore.toLocaleString()}</div>
+          </div>
+        `;
+
+        // Reveal result badge + score after 2.5 s
+        setTimeout(() => {
+          const badge = document.getElementById('fjResultBadge');
+          if (badge) { badge.style.opacity = '1'; badge.firstElementChild?.classList.add('fj-badge-show'); }
+          const scoreEl = document.getElementById('fjScoreChange');
+          if (scoreEl) scoreEl.classList.add('fj-score-show');
+          renderScores();
+        }, 2500);
+
+        // Fade the card out after 8.5 s so the next reveal can slide in cleanly
+        setTimeout(() => {
+          if (!overlay) return;
+          overlay.style.transition = 'opacity .9s ease';
+          overlay.style.opacity = '0';
+          setTimeout(() => { if (overlay) { overlay.style.display = 'none'; overlay.style.transition = ''; overlay.style.opacity = '1'; } }, 900);
+        }, 8500);
       }
 
       if (msg.type === 'GAME_OVER') {
@@ -694,6 +823,8 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         questionOverlay.classList.add('hidden');
         bgPlaylist.stop();
         stopSound('think');
+        if (window._fjCountdownTimer) { clearInterval(window._fjCountdownTimer); window._fjCountdownTimer = null; }
+        document.getElementById('fjCountdown')?.remove();
         playSound('timesUp');
         showPresenterGameOver(msg);
       }

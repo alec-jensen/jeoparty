@@ -249,6 +249,46 @@ async function maybeStartFinalPrompt(game: ActiveGame) {
   trackTimer(game.gameId, timer);
 }
 
+async function revealFinalPlayer(game: ActiveGame, gameId: string, playerId: string) {
+  if (!game.finalJeopardy) return;
+  if (game.finalJeopardy.revealed.has(playerId)) return;
+  const judgment = game.finalJeopardy.judgments.get(playerId);
+  if (judgment === undefined) return;
+  game.finalJeopardy.revealed.add(playerId);
+  void persistFinalJeopardy(gameId, game.finalJeopardy);
+  const p = game.players.get(playerId);
+  const wager = game.finalJeopardy.wagers.get(playerId) ?? 0;
+  if (p) {
+    p.score += judgment ? wager : -wager;
+    await persistPlayerScore(gameId, playerId, p.score);
+  }
+  broadcast(game, 'FINAL_RESPONSE_REVEAL', {
+    playerId,
+    displayName: p?.displayName ?? 'Player',
+    avatarColor: p?.avatarColor ?? 0,
+    avatarShape: p?.avatarShape ?? 0,
+    answer: game.finalJeopardy.answers.get(playerId) ?? '',
+    wager,
+    correct: judgment,
+    newScore: p?.score ?? 0,
+  });
+  broadcast(game, 'SCORE_UPDATE', { scores: scoreList(game), teams: teamList(game) });
+  const eligible = finalJeopardyEligible(game);
+  const allRevealed = eligible.every((id) => game.finalJeopardy?.revealed.has(id));
+  if (allRevealed) {
+    // Delay GAME_OVER so the last reveal card has time to animate (~8.5 s fade-out)
+    // before the game-over screen takes over on the presenter.
+    const timer = setTimeout(async () => {
+      const live = (globalThis as any)._jeoparty_games?.get(gameId) ?? game;
+      broadcast(live, 'GAME_OVER', { scores: scoreList(live), teams: teamList(live) });
+      await setGameStatus(gameId, 'finished');
+      live.status = 'finished';
+      scheduleGameRemoval(gameId);
+    }, 10000);
+    trackTimer(gameId, timer);
+  }
+}
+
 function sendFinalResultsToHost(game: ActiveGame) {
   if (!game.finalJeopardy) return;
   if (game.finalJeopardy.resultsSent) return;
@@ -656,35 +696,27 @@ export function initWebSockets(server: import('node:http').Server) {
         }
 
         if (data.type === 'REVEAL_FINAL_RESPONSE' && current.finalJeopardy) {
-          const playerId = data.playerId as string;
-          if (current.finalJeopardy.revealed.has(playerId)) return;
-          current.finalJeopardy.revealed.add(playerId);
-          void persistFinalJeopardy(gameId, current.finalJeopardy);
-          const judgment = current.finalJeopardy.judgments.get(playerId);
-          if (judgment === undefined) return; // host must judge before revealing
-          const p = current.players.get(playerId);
-          const wager = current.finalJeopardy.wagers.get(playerId) ?? 0;
-          if (p) {
-            p.score += judgment ? wager : -wager;
-            await persistPlayerScore(gameId, playerId, p.score);
-          }
-          broadcast(current, 'FINAL_RESPONSE_REVEAL', {
-            playerId,
-            displayName: p?.displayName ?? 'Player',
-            answer: current.finalJeopardy.answers.get(playerId) ?? '',
-            wager,
-            correct: judgment,
-            newScore: p?.score ?? 0,
-          });
-          broadcast(current, 'SCORE_UPDATE', { scores: scoreList(current), teams: teamList(current) });
+          await revealFinalPlayer(current, gameId, data.playerId as string);
+        }
+
+        if (data.type === 'START_FINAL_REVEAL' && current.finalJeopardy) {
           const eligible = finalJeopardyEligible(current);
-          const allRevealed = eligible.every((id) => current.finalJeopardy?.revealed.has(id));
-          if (allRevealed) {
-            broadcast(current, 'GAME_OVER', { scores: scoreList(current), teams: teamList(current) });
-            await setGameStatus(gameId, 'finished');
-            current.status = 'finished';
-            scheduleGameRemoval(gameId);
-          }
+          const allJudged = eligible.every((id) => current.finalJeopardy?.judgments.has(id));
+          if (!allJudged) return;
+          const wrong   = eligible.filter((id) => current.finalJeopardy?.judgments.get(id) === false);
+          const correct = eligible.filter((id) => current.finalJeopardy?.judgments.get(id) === true);
+          const ordered = [...wrong, ...correct];
+          // Signal the reveal sequence to all clients (so presenter can prepare)
+          broadcast(current, 'FINAL_REVEAL_SEQUENCE', { count: ordered.length, wrongCount: wrong.length });
+          // Stagger reveals: first one after 3s, then every 10s
+          ordered.forEach((pid, idx) => {
+            const delay = 3000 + idx * 10000;
+            const timer = setTimeout(async () => {
+              const live = (globalThis as any)._jeoparty_games?.get(gameId) ?? current;
+              await revealFinalPlayer(live, gameId, pid);
+            }, delay);
+            trackTimer(gameId, timer);
+          });
         }
 
         if (data.type === 'END_GAME') {
