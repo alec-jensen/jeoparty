@@ -33,3 +33,15 @@
 - [ ] animate the game results at the end of the game, starting from lowest score to highest score, with the winning team/player doing a little dance or something
 
 - [ ] url to join on the presenter lobby does not correctly reflect the domain the app is running on. should check the qr code too
+
+# playtest results
+
+- [ ] host needs to be able to remove people
+
+- [ ] multiple songs end up playing at once - song state management is incorrect
+
+- [ ] player state isnt exactly recovered correctly (although players can still play after a refresh, they just lose the ability to buzz for the current clue)
+
+- [ ] make final jeopardy rules show for 20 seconds
+
+- [ ] if a player client disconnects or breaks or anything during final jeopardy before they submit their answer, the game gets hard locked with no way to continue
