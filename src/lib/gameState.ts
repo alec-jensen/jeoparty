@@ -513,7 +513,19 @@ export function currentRoundCategories(game: ActiveGame) {
 }
 
 export function boardState(game: ActiveGame) {
-  let activeQuestion: { categoryTitle: string; value: number; questionText: string; isDailyDouble: boolean } | null = null;
+  let activeQuestion:
+    | {
+        questionId: number;
+        categoryTitle: string;
+        value: number;
+        questionText: string;
+        isDailyDouble: boolean;
+        buzzerOpen: boolean;
+        winnerId: string | null;
+        eliminatedPlayerIds: string[];
+        dailyDoubleWager: number | null;
+      }
+    | null = null;
   let buzzWinner: { playerId: string; displayName: string } | null = null;
 
   if (game.currentQuestion) {
@@ -521,7 +533,17 @@ export function boardState(game: ActiveGame) {
     for (const cat of currentRoundCategories(game)) {
       const q = cat.questions.find((it) => it.id === cq.questionId);
       if (q) {
-        activeQuestion = { categoryTitle: cat.title, value: cq.value, questionText: q.question, isDailyDouble: cq.isDailyDouble };
+        activeQuestion = {
+          questionId: cq.questionId,
+          categoryTitle: cat.title,
+          value: cq.value,
+          questionText: q.question,
+          isDailyDouble: cq.isDailyDouble,
+          buzzerOpen: !!cq.buzzerOpen,
+          winnerId: cq.winnerId ?? null,
+          eliminatedPlayerIds: Array.from(cq.eliminated),
+          dailyDoubleWager: cq.dailyDoubleWager ?? null,
+        };
         break;
       }
     }

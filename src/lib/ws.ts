@@ -289,6 +289,68 @@ async function revealFinalPlayer(game: ActiveGame, gameId: string, playerId: str
   }
 }
 
+/**
+ * Grace timers keyed by `${gameId}:${playerId}`. Cleared on player reconnect.
+ * If the timer fires, we default-fill the player's missing wager/answer so
+ * Final Jeopardy can advance even with a stuck/broken client.
+ */
+const fjGraceTimers = new Map<string, NodeJS.Timeout>();
+const FJ_DISCONNECT_GRACE_MS = 15_000;
+
+function fjKey(gameId: string, playerId: string) { return `${gameId}:${playerId}`; }
+
+function clearFinalJeopardyDefault(gameId: string, playerId: string) {
+  const key = fjKey(gameId, playerId);
+  const t = fjGraceTimers.get(key);
+  if (t) { clearTimeout(t); fjGraceTimers.delete(key); }
+}
+
+function scheduleFinalJeopardyDefault(game: ActiveGame, playerId: string) {
+  if (game.status !== 'final_jeopardy' || !game.finalJeopardy) return;
+  const player = game.players.get(playerId);
+  if (!player || player.score <= 0) return; // not eligible — irrelevant
+  // Only schedule if this player is blocking us (no wager OR no answer-after-prompt)
+  const fj = game.finalJeopardy;
+  const needsWager  = !fj.wagers.has(playerId);
+  const needsAnswer = fj.wagers.has(playerId) && !fj.answers.has(playerId);
+  if (!needsWager && !needsAnswer) return;
+  const key = fjKey(game.gameId, playerId);
+  if (fjGraceTimers.has(key)) return; // already scheduled
+  const timer = setTimeout(async () => {
+    fjGraceTimers.delete(key);
+    const live = (globalThis as any)._jeoparty_games?.get(game.gameId) as ActiveGame | undefined;
+    if (!live || live.status !== 'final_jeopardy' || !live.finalJeopardy) return;
+    // Player still disconnected? Their socketId would have been cleared on close
+    // and only reset if they reconnect. If they reconnected, this timer is cleared.
+    const p = live.players.get(playerId);
+    if (!p) return;
+    let changed = false;
+    if (!live.finalJeopardy.wagers.has(playerId)) {
+      live.finalJeopardy.wagers.set(playerId, 0);
+      changed = true;
+    }
+    // Only force an empty answer if the prompt is already revealed (i.e. all
+    // wagers were in and the 30s clock started). Otherwise the wager default
+    // above is enough to advance — the per-question 30s timer handles answers.
+    // We detect "prompt revealed" by checking the resultsSent flag — but that
+    // flips later. A simpler proxy: if every eligible player has a wager AND
+    // we're past wager phase, force answer.
+    const eligible = finalJeopardyEligible(live);
+    const allWagered = eligible.every((id) => live.finalJeopardy?.wagers.has(id));
+    if (allWagered && !live.finalJeopardy.answers.has(playerId)) {
+      live.finalJeopardy.answers.set(playerId, '');
+      changed = true;
+    }
+    if (changed) {
+      void persistFinalJeopardy(live.gameId, live.finalJeopardy);
+      await maybeStartFinalPrompt(live);
+      const allAnswered = eligible.every((id) => live.finalJeopardy?.answers.has(id));
+      if (allAnswered) sendFinalResultsToHost(live);
+    }
+  }, FJ_DISCONNECT_GRACE_MS);
+  fjGraceTimers.set(key, timer);
+}
+
 function sendFinalResultsToHost(game: ActiveGame) {
   if (!game.finalJeopardy) return;
   if (game.finalJeopardy.resultsSent) return;
@@ -459,6 +521,7 @@ export function initWebSockets(server: import('node:http').Server) {
         if (!player) return ws.close();
         meta = { socketId: randomUUID(), gameId, role: 'player', playerId: playerPayload.playerId };
         player.socketId = meta.socketId;
+        clearFinalJeopardyDefault(gameId, playerPayload.playerId);
         await db.update(schema.players).set({ socketId: meta.socketId }).where(eq(schema.players.id, playerPayload.playerId));
       }
     } else {
@@ -587,7 +650,38 @@ export function initWebSockets(server: import('node:http').Server) {
 
         if (data.type === 'KICK_PLAYER') {
           const playerId = data.playerId as string;
+          const kicked = current.players.get(playerId);
+          if (!kicked) return;
+          // Remove from team membership
+          if (kicked.teamId != null) {
+            const team = current.teams.get(kicked.teamId);
+            if (team) team.playerIds = team.playerIds.filter((id) => id !== playerId);
+          }
+          // Disconnect the kicked player's socket if connected
+          if (kicked.socketId) {
+            const entry = sockets.get(kicked.socketId);
+            if (entry) {
+              try { entry.ws.close(); } catch {}
+              sockets.delete(kicked.socketId);
+            }
+          }
           current.players.delete(playerId);
+          // Drop any in-flight buzz / elimination tracking for the kicked player
+          if (current.currentQuestion) {
+            current.currentQuestion.buzzOrder = current.currentQuestion.buzzOrder.filter(b => b.playerId !== playerId);
+            current.currentQuestion.eliminated.delete(playerId);
+            if (current.currentQuestion.winnerId === playerId) current.currentQuestion.winnerId = null;
+          }
+          // Drop any pending disconnect-grace default-fill timer
+          clearFinalJeopardyDefault(gameId, playerId);
+          // Clean up any final-jeopardy entries for the kicked player
+          if (current.finalJeopardy) {
+            current.finalJeopardy.wagers.delete(playerId);
+            current.finalJeopardy.answers.delete(playerId);
+            current.finalJeopardy.judgments.delete(playerId);
+            current.finalJeopardy.revealed.delete(playerId);
+            void persistFinalJeopardy(gameId, current.finalJeopardy);
+          }
           await db.delete(schema.players).where(eq(schema.players.id, playerId));
           // If the picker just left, hand the pick to the next remaining player
           if (current.currentPicker === playerId) {
@@ -596,6 +690,15 @@ export function initWebSockets(server: import('node:http').Server) {
             await db.update(schema.games).set({ currentPickerId: next }).where(eq(schema.games.id, gameId));
           }
           broadcast(current, 'PLAYER_KICKED', { playerId });
+          broadcast(current, 'SCORE_UPDATE', { scores: scoreList(current), teams: teamList(current) });
+          broadcast(current, 'BOARD_STATE', boardState(current));
+          // If we were stuck waiting on this player in Final Jeopardy, try to advance.
+          if (current.status === 'final_jeopardy' && current.finalJeopardy) {
+            await maybeStartFinalPrompt(current);
+            const eligible = finalJeopardyEligible(current);
+            const allAnswered = eligible.every((id) => current.finalJeopardy?.answers.has(id));
+            if (allAnswered) sendFinalResultsToHost(current);
+          }
         }
 
         if (data.type === 'ADJUST_SCORE') {
@@ -909,6 +1012,7 @@ export function initWebSockets(server: import('node:http').Server) {
       if (meta.role === 'player' && meta.playerId) {
         const p = g.players.get(meta.playerId);
         if (p) p.socketId = '';
+        scheduleFinalJeopardyDefault(g, meta.playerId);
       }
       if (meta.role === 'host') g.hostSocketId = '';
     });

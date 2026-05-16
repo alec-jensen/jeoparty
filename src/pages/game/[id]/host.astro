@@ -168,6 +168,18 @@ const seed = {
       align-self: center;
     }
     .mini-stepper:active { transform: scale(0.9); background: var(--bg2); }
+    .kick-btn {
+      width: 22px; height: 22px; border-radius: 5px;
+      background: transparent; color: var(--dim);
+      border: 1px solid var(--line);
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: 14px; line-height: 1; padding: 0; margin-left: 4px;
+      cursor: pointer; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .kick-btn:hover, .kick-btn:active {
+      color: var(--red); border-color: var(--red); background: rgba(255,77,77,0.08);
+    }
     
     .tab-bar { display: none; }
     
@@ -395,7 +407,13 @@ const seed = {
       if (msg.type === 'SYNC_STATE' || msg.type === 'BOARD_STATE') {
         applySyncState(msg);
       } else if (msg.type === 'SCORE_UPDATE') {
+        // Replace map contents — server is the source of truth, so kicked
+        // players are dropped here in addition to score/team updates.
+        players.clear();
         (msg.scores || []).forEach((s) => players.set(s.playerId, s));
+        renderPlayerList();
+      } else if (msg.type === 'PLAYER_KICKED') {
+        players.delete(msg.playerId);
         renderPlayerList();
       } else if (msg.type === 'BUZZ_WINNER') {
         renderJudging(msg);
@@ -659,6 +677,7 @@ const seed = {
             <div class="${scoreClass}">${formatDollars(p.score)}</div>
             <button type="button" class="mini-stepper plus" data-id="${p.playerId}">+</button>
           </div>
+          <button type="button" class="kick-btn" data-id="${p.playerId}" data-name="${(p.displayName || 'Player').replace(/"/g, '&quot;')}" title="Remove player" aria-label="Remove player">×</button>
         `;
         container.appendChild(row);
       });
@@ -669,6 +688,15 @@ const seed = {
           const p = players.get(id);
           const val = btn.classList.contains('plus') ? 200 : -200;
           ws.send(JSON.stringify({ type: 'ADJUST_SCORE', playerId: id, score: p.score + val }));
+        };
+      });
+
+      container.querySelectorAll('.kick-btn').forEach(btn => {
+        btn.onclick = () => {
+          const id = btn.dataset.id;
+          const name = btn.dataset.name || 'this player';
+          if (!confirm(`Remove ${name} from the game?`)) return;
+          ws.send(JSON.stringify({ type: 'KICK_PLAYER', playerId: id }));
         };
       });
     }

@@ -1493,9 +1493,10 @@ const initialPlayerId = payload?.playerId ?? '';
             setFooter('Watch the screen', { color: 'var(--violet)' });
             return;
           }
-          // Show how-it-works instructions for 3.5 seconds, then transition to wager input
+          // Show how-it-works instructions for 20 seconds, then transition to wager input
           if (msg.category) showClue(msg.category, 0);
           setPhase('fj-intro');
+          const FJ_RULES_MS = 20000;
           phaseRoot.innerHTML = `
             <div class="big-text-area">
               <div class="big-text-eyebrow">FINAL JEOPARTY</div>
@@ -1504,17 +1505,28 @@ const initialPlayerId = payload?.playerId ?? '';
               <div class="big-text-sub">② The clue drops on the big screen</div>
               <div class="big-text-sub">③ Type your answer — you have <strong style="color:var(--gold)">30 seconds</strong></div>
               <div class="big-text-sub">④ Correct = +wager &nbsp;·&nbsp; Wrong = −wager</div>
+              <div class="big-text-sub" style="margin-top:14px;color:var(--dim);font-size:12px;letter-spacing:0.18em;">Wager opens in <span id="fjRulesCountdown">${Math.round(FJ_RULES_MS / 1000)}</span>s</div>
             </div>
           `;
           setFooter('Get ready…', { color: 'var(--gold)', pulse: true });
+          let _rulesLeft = Math.round(FJ_RULES_MS / 1000);
+          const _rulesEl = document.getElementById('fjRulesCountdown');
+          const _rulesTimer = setInterval(() => {
+            _rulesLeft--;
+            const el = document.getElementById('fjRulesCountdown');
+            if (!el || !el.isConnected) { clearInterval(_rulesTimer); return; }
+            el.textContent = String(Math.max(0, _rulesLeft));
+            if (_rulesLeft <= 0) clearInterval(_rulesTimer);
+          }, 1000);
           setTimeout(() => {
+            clearInterval(_rulesTimer);
             renderWagerInput({
               mode: 'final',
               eyebrow: 'FINAL JEOPARTY',
               headline: 'Set your wager.',
               cap: myScore,
             });
-          }, 3500);
+          }, FJ_RULES_MS);
         }
 
         if (msg.type === 'FINAL_JEOPARDY_START') {
@@ -1609,6 +1621,61 @@ const initialPlayerId = payload?.playerId ?? '';
       // Don't blow away an active mid-question UI on every sync; only re-render passive states.
       const phase = phone.dataset.phase;
       if (phase === 'buzzer' || phase === 'buzzed' || phase === 'lockedout' || phase === 'correct' || phase === 'wrong') return;
+
+      // Mid-question state recovery (e.g. after refresh while a clue is open):
+      // use the server's snapshot to restore the right player view rather than
+      // dropping the user back at "waiting for picker".
+      const aq = state.activeQuestion;
+      if (gameState.status === 'active' && aq) {
+        gameOverRendered = false;
+        const eliminated = Array.isArray(aq.eliminatedPlayerIds) && aq.eliminatedPlayerIds.includes(playerId);
+        const iWon = aq.winnerId && aq.winnerId === playerId;
+        const someoneElseWon = aq.winnerId && aq.winnerId !== playerId;
+        lockedFromCurrentClue = eliminated;
+        showClue(aq.categoryTitle, aq.value);
+        if (aq.isDailyDouble) {
+          // Daily Double: only the picker wagers; everyone else just waits.
+          if (gameState.currentPicker === playerId && aq.dailyDoubleWager == null) {
+            const myScore = myScoreEntry()?.score ?? 0;
+            const cats = gameState.board?.categories ?? [];
+            let highestRemaining = 0;
+            for (const cat of cats) {
+              for (const q of cat.questions) {
+                if (gameState.usedQuestions.has(q.id)) continue;
+                if (q.id === aq.questionId) continue;
+                if (q.value > highestRemaining) highestRemaining = q.value;
+              }
+            }
+            renderWagerInput({
+              mode: 'dd',
+              eyebrow: '⭐ DAILY DOUBLE',
+              headline: 'Set your wager.',
+              cap: Math.max(myScore, highestRemaining),
+            });
+          } else if (iWon) {
+            renderBuzzed();
+          } else {
+            const picker = gameState.scores.find((s) => s.playerId === gameState.currentPicker);
+            renderWaiting(`Waiting for ${picker?.displayName ?? 'player'}'s wager…`);
+          }
+        } else if (iWon) {
+          renderBuzzed();
+        } else if (someoneElseWon) {
+          const winner = gameState.scores.find((s) => s.playerId === aq.winnerId);
+          renderLockedOut(winner?.displayName);
+        } else if (eliminated) {
+          renderLockedOut('');
+        } else if (aq.buzzerOpen) {
+          canBuzz = true;
+          renderBuzzer();
+        } else {
+          // Clue is open but the buzzer hasn't fired yet (or window between
+          // buzzes). Show the buzz UI but keep it disabled until BUZZER_OPEN.
+          canBuzz = false;
+          renderBuzzer();
+        }
+        return;
+      }
 
       if (gameState.status === 'lobby') renderLobby();
       else if (gameState.status === 'active') {

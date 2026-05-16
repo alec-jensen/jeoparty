@@ -383,34 +383,70 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
     ];
     const BG_VOL = 0.3;
     const bgPlaylist = (() => {
-      const els = BG_SRCS.map(src => { const a = new Audio(src); a.preload = 'auto'; a.volume = BG_VOL; return a; });
+      const els = BG_SRCS.map(src => {
+        const a = new Audio(src);
+        a.preload = 'auto';
+        a.volume = BG_VOL;
+        return a;
+      });
+      // Clear handlers and clamp every track. Defensive against any stale
+      // `onended` callbacks chaining a second song on top of the live one.
+      function silenceAllExcept(keepIdx) {
+        els.forEach((a, i) => {
+          if (i === keepIdx) return;
+          try {
+            a.onended = null;
+            a.pause();
+            a.currentTime = 0;
+            a.volume = BG_VOL;
+          } catch {}
+        });
+      }
       let curIdx = -1;
       let running = false;
       let fadeTimer = null;
       function clearFade() { if (fadeTimer) { clearInterval(fadeTimer); fadeTimer = null; } }
+      function attachEnded(idx) {
+        const a = els[idx];
+        if (!a) return;
+        a.onended = () => {
+          // Ignore stale ended events: only auto-advance if this track is
+          // still the live track AND the playlist is still running.
+          if (!running || idx !== curIdx) return;
+          nextTrack();
+        };
+      }
       function nextTrack() {
         if (!running) return;
         let idx;
         do { idx = Math.floor(Math.random() * els.length); } while (idx === curIdx && els.length > 1);
+        // Stop every track that isn't about to become the live one.
+        silenceAllExcept(idx);
         curIdx = idx;
         const a = els[idx];
         a.currentTime = 0;
         a.volume = BG_VOL;
-        a.onended = () => { if (running) nextTrack(); };
+        attachEnded(idx);
         a.play().catch(() => {});
       }
       return {
         prime: () => Promise.allSettled(els.map(a => { const w = a.muted; a.muted = true; return a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = w; }).catch(() => { a.muted = w; }); })),
-        isPlaying: () => curIdx >= 0 && !els[curIdx]?.paused,
+        isPlaying: () => curIdx >= 0 && !!els[curIdx] && !els[curIdx].paused,
         stop() {
-          clearFade(); running = false; curIdx = -1;
-          els.forEach(a => { try { a.pause(); a.currentTime = 0; a.volume = BG_VOL; } catch {} });
+          clearFade();
+          running = false;
+          curIdx = -1;
+          els.forEach(a => {
+            try { a.onended = null; a.pause(); a.currentTime = 0; a.volume = BG_VOL; } catch {}
+          });
         },
         fadeOut(ms = 1200) {
           clearFade();
           if (curIdx < 0) return;
           const a = els[curIdx];
           if (!a || a.paused) return;
+          // Stop the auto-advance chain so we don't queue a new track while fading.
+          running = false;
           const start = a.volume; let i = 0; const steps = 24;
           fadeTimer = setInterval(() => {
             i++; a.volume = Math.max(0, start * (1 - i / steps));
@@ -419,17 +455,33 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         },
         fadeIn(ms = 800) {
           if (!audioEnabled) return;
-          clearFade(); running = true;
+          clearFade();
+          // If a track is already audibly playing, just make sure it stays the
+          // only one. Don't pick a new track on top of it.
+          if (curIdx >= 0 && els[curIdx] && !els[curIdx].paused) {
+            running = true;
+            silenceAllExcept(curIdx);
+            attachEnded(curIdx);
+            els[curIdx].volume = BG_VOL;
+            return;
+          }
+          running = true;
           // Resume the paused track if there is one, otherwise start fresh
           const cur = curIdx >= 0 ? els[curIdx] : null;
           let target;
           if (cur && cur.paused) {
-            cur.volume = 0; cur.play().catch(() => {}); target = cur;
+            silenceAllExcept(curIdx);
+            cur.volume = 0;
+            attachEnded(curIdx);
+            cur.play().catch(() => {});
+            target = cur;
           } else {
-            let idx; do { idx = Math.floor(Math.random() * els.length); } while (idx === curIdx && els.length > 1);
+            let idx;
+            do { idx = Math.floor(Math.random() * els.length); } while (idx === curIdx && els.length > 1);
+            silenceAllExcept(idx);
             curIdx = idx; target = els[idx];
             target.currentTime = 0; target.volume = 0;
-            target.onended = () => { if (running) nextTrack(); };
+            attachEnded(idx);
             target.play().catch(() => {});
           }
           let i = 0; const steps = 20;
@@ -655,7 +707,8 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
         } else {
           fjAnnounce.style.display = 'flex';
         }
-        // After 10 seconds, replace with the board question overlay
+        // Hold the announcement for 20s (matches the player rules window),
+        // then replace with the "wagers in progress" overlay.
         setTimeout(() => {
           if (fjAnnounce) fjAnnounce.style.display = 'none';
           questionOverlay.classList.add('hidden');
@@ -663,7 +716,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
             msg.category ? `FINAL JEOPARTY · ${msg.category.toUpperCase()}` : 'FINAL JEOPARTY';
           document.getElementById('qText').textContent = 'Players are entering their wagers…';
           questionOverlay.classList.remove('hidden');
-        }, 10000);
+        }, 20000);
       }
 
       if (msg.type === 'FINAL_JEOPARDY_START') {
