@@ -232,10 +232,16 @@ function finalJeopardyEligible(game: ActiveGame): string[] {
 
 async function maybeStartFinalPrompt(game: ActiveGame) {
   if (!game.finalJeopardy) return;
+  // Don't reveal the clue until the host has clicked "Continue to wagers".
+  if (game.finalJeopardy.phase === 'rules') return;
   const eligible = finalJeopardyEligible(game);
   if (!eligible.length) return;
   const allWagered = eligible.every((id) => game.finalJeopardy?.wagers.has(id));
   if (!allWagered) return;
+  if (game.finalJeopardy.phase !== 'answering') {
+    game.finalJeopardy.phase = 'answering';
+    void persistFinalJeopardy(game.gameId, game.finalJeopardy);
+  }
   // All wagers are in — reveal the clue. Players have 30s to answer.
   broadcast(game, 'FINAL_JEOPARDY_START', {
     category: game.board.finalCategory,
@@ -355,6 +361,10 @@ function sendFinalResultsToHost(game: ActiveGame) {
   if (!game.finalJeopardy) return;
   if (game.finalJeopardy.resultsSent) return;
   game.finalJeopardy.resultsSent = true;
+  if (game.finalJeopardy.phase !== 'judging' && game.finalJeopardy.phase !== 'revealing') {
+    game.finalJeopardy.phase = 'judging';
+    void persistFinalJeopardy(game.gameId, game.finalJeopardy);
+  }
   const eligible = finalJeopardyEligible(game);
   const results = eligible.map((id) => {
     const pl = game.players.get(id)!;
@@ -657,13 +667,15 @@ export function initWebSockets(server: import('node:http').Server) {
             const team = current.teams.get(kicked.teamId);
             if (team) team.playerIds = team.playerIds.filter((id) => id !== playerId);
           }
-          // Disconnect the kicked player's socket if connected
-          if (kicked.socketId) {
-            const entry = sockets.get(kicked.socketId);
-            if (entry) {
-              try { entry.ws.close(); } catch {}
-              sockets.delete(kicked.socketId);
-            }
+          // Notify the kicked player BEFORE we tear down their socket so they
+          // actually see the "you were removed" screen, then remove them from
+          // the broadcast set so the upcoming broadcast doesn't double-send.
+          const kickedEntry = kicked.socketId ? sockets.get(kicked.socketId) : null;
+          if (kickedEntry) {
+            send(kickedEntry.ws, 'PLAYER_KICKED', { playerId });
+            sockets.delete(kicked.socketId);
+            // Give the message a tick to flush before closing.
+            setTimeout(() => { try { kickedEntry.ws.close(); } catch {} }, 250);
           }
           current.players.delete(playerId);
           // Drop any in-flight buzz / elimination tracking for the kicked player
@@ -781,9 +793,21 @@ export function initWebSockets(server: import('node:http').Server) {
             judgments: new Map(),
             finalQuestion: current.board.finalQuestion,
             revealed: new Set<string>(),
+            phase: 'rules',
           };
           void persistFinalJeopardy(gameId, current.finalJeopardy);
           broadcast(current, 'START_FINAL_JEOPARDY', {
+            category: current.board.finalCategory,
+            eligiblePlayerIds: finalJeopardyEligible(current),
+          });
+        }
+
+        // Host advances from rules → wager input phase whenever they're ready.
+        if (data.type === 'FJ_PROCEED_TO_WAGERS' && current.finalJeopardy) {
+          if (current.finalJeopardy.phase === 'wagering' || current.finalJeopardy.phase === 'answering') return;
+          current.finalJeopardy.phase = 'wagering';
+          void persistFinalJeopardy(gameId, current.finalJeopardy);
+          broadcast(current, 'FINAL_JEOPARDY_WAGER_PHASE', {
             category: current.board.finalCategory,
             eligiblePlayerIds: finalJeopardyEligible(current),
           });
@@ -806,6 +830,8 @@ export function initWebSockets(server: import('node:http').Server) {
           const eligible = finalJeopardyEligible(current);
           const allJudged = eligible.every((id) => current.finalJeopardy?.judgments.has(id));
           if (!allJudged) return;
+          current.finalJeopardy.phase = 'revealing';
+          void persistFinalJeopardy(gameId, current.finalJeopardy);
           const wrong   = eligible.filter((id) => current.finalJeopardy?.judgments.get(id) === false);
           const correct = eligible.filter((id) => current.finalJeopardy?.judgments.get(id) === true);
           const ordered = [...wrong, ...correct];

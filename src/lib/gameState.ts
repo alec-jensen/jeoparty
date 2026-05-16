@@ -93,6 +93,15 @@ export interface ActiveGame {
     judgments: Map<string, boolean>;
     revealed: Set<string>;
     resultsSent?: boolean;
+    /**
+     * Host-paced phase of Final Jeopardy:
+     *   rules     — rules screen up, host hasn't advanced yet
+     *   wagering  — wager inputs open on eligible players
+     *   answering — clue revealed, 30s answer timer running
+     *   judging   — answers in, host judging
+     *   revealing — staggered reveal sequence in progress
+     */
+    phase: 'rules' | 'wagering' | 'answering' | 'judging' | 'revealing';
   } | null;
   /** Team name suggestion/voting state — only present during naming phase */
   teamNaming: {
@@ -471,6 +480,7 @@ export async function persistFinalJeopardy(gameId: string, fj: ActiveGame['final
     answers: Object.fromEntries(fj.answers),
     judgments: Object.fromEntries(fj.judgments),
     revealed: Array.from(fj.revealed),
+    phase: fj.phase,
   }) : null;
   await db.update(schema.games).set({ finalJeopardyJson: json } as any).where(eq(schema.games.id, gameId));
 }
@@ -498,12 +508,16 @@ function restoreFinalJeopardy(json: string | null): ActiveGame['finalJeopardy'] 
   if (!json) return null;
   try {
     const d = JSON.parse(json);
+    const validPhases: ReadonlyArray<string> = ['rules', 'wagering', 'answering', 'judging', 'revealing'];
+    const phase = (validPhases.includes(d.phase) ? d.phase : 'rules') as
+      'rules' | 'wagering' | 'answering' | 'judging' | 'revealing';
     return {
       finalQuestion: d.finalQuestion ?? '',
       wagers: new Map(Object.entries(d.wagers ?? {})),
       answers: new Map(Object.entries(d.answers ?? {})),
       judgments: new Map(Object.entries(d.judgments ?? {})),
       revealed: new Set(d.revealed ?? []),
+      phase,
     };
   } catch { return null; }
 }
@@ -572,5 +586,14 @@ export function boardState(game: ActiveGame) {
     status: game.status,
     activeQuestion,
     buzzWinner,
+    finalJeopardy: game.finalJeopardy
+      ? {
+          phase: game.finalJeopardy.phase,
+          category: game.board.finalCategory,
+          eligiblePlayerIds: Array.from(game.players.entries())
+            .filter(([_, p]) => (p.score ?? 0) > 0)
+            .map(([id]) => id),
+        }
+      : null,
   };
 }

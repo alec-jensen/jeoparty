@@ -459,7 +459,44 @@ const seed = {
         if (finalState) { finalState.revealed[msg.playerId] = true; renderFinalResponses(); }
       } else if (msg.type === 'FINAL_REVEAL_SEQUENCE') {
         if (finalState) { finalState.revealStarted = true; renderFinalResponses(); }
+      } else if (msg.type === 'START_FINAL_JEOPARDY') {
+        showFinalRulesOverlay(msg);
+      } else if (msg.type === 'FINAL_JEOPARDY_WAGER_PHASE') {
+        hideFinalRulesOverlay();
       }
+    }
+
+    function showFinalRulesOverlay(msg) {
+      let overlay = document.getElementById('finalRulesOverlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'finalRulesOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,11,34,0.97);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:200;padding:2rem;gap:16px;text-align:center;backdrop-filter:blur(8px);';
+        document.body.appendChild(overlay);
+      }
+      const cat = msg.category ? String(msg.category).toUpperCase() : '';
+      overlay.innerHTML = `
+        <div style="font-family:'Anton',sans-serif;font-size:1rem;color:var(--dim);letter-spacing:0.32em;">FINAL JEOPARTY</div>
+        <div style="font-family:'Anton',sans-serif;font-size:2.2rem;color:var(--gold);letter-spacing:0.08em;line-height:1;">${cat || 'CATEGORY'}</div>
+        <div style="max-width:300px;font-size:13px;color:var(--ink);line-height:1.5;text-align:left;">
+          <div>① Players wager up to their score</div>
+          <div>② You reveal the clue (next step)</div>
+          <div>③ Players have 30 s to type an answer</div>
+          <div>④ Correct = +wager · Wrong = −wager</div>
+        </div>
+        <div style="font-size:11px;color:var(--dim);letter-spacing:0.18em;max-width:280px;line-height:1.5;">Players and the big screen are on the rules card. Continue when everyone has read them.</div>
+        <button id="fjContinueBtn" class="btn-judge btn-correct" style="margin-top:8px;padding:14px 28px;font-size:16px;letter-spacing:0.08em;">CONTINUE → WAGERS</button>
+      `;
+      document.getElementById('fjContinueBtn').onclick = () => {
+        ws.send(JSON.stringify({ type: 'FJ_PROCEED_TO_WAGERS' }));
+        hideFinalRulesOverlay();
+      };
+      overlay.style.display = 'flex';
+    }
+
+    function hideFinalRulesOverlay() {
+      const overlay = document.getElementById('finalRulesOverlay');
+      if (overlay) overlay.style.display = 'none';
     }
 
     function showTeamNamingOverlay(msg) {
@@ -564,7 +601,12 @@ const seed = {
       if (state.serverTime && state.serverTime < lastStateTime) return;
       lastStateTime = state.serverTime || Date.now();
 
-      if (state.scores) state.scores.forEach(s => players.set(s.playerId, s));
+      // Server is the source of truth — replace the players map so kicked
+      // players actually disappear from the host roster.
+      if (state.scores) {
+        players.clear();
+        state.scores.forEach(s => players.set(s.playerId, s));
+      }
       if (state.usedQuestions) usedSet = new Set(state.usedQuestions);
       if (state.currentRound != null) currentRound = state.currentRound;
 
@@ -585,6 +627,13 @@ const seed = {
       renderPlayerList();
       renderBoard();
       updateClueCard();
+
+      // Final Jeopardy rules overlay — show if we landed mid-rules, hide otherwise
+      if (state.status === 'final_jeopardy' && state.finalJeopardy?.phase === 'rules') {
+        showFinalRulesOverlay({ category: state.finalJeopardy.category || '' });
+      } else if (state.status !== 'final_jeopardy') {
+        hideFinalRulesOverlay();
+      }
 
       if (state.status === 'finished') {
         showGameOverOverlay({

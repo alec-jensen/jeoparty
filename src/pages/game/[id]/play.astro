@@ -723,6 +723,13 @@ const initialPlayerId = payload?.playerId ?? '';
       });
     }
     function cycleAvatar() {
+      // Locked once the game leaves the lobby — server rejects too, but we
+      // also block the local cosmetic change so the user sees consistent state.
+      if (playerId && gameState.status && gameState.status !== 'lobby') {
+        setFooter("Can't change avatar mid-game.", { color: 'var(--red)' });
+        setTimeout(() => setFooter(`Connected · room ${gameId}`, { color: 'var(--mint)' }), 2000);
+        return;
+      }
       // Pick a random untaken combo (excluding current if alternatives exist)
       const available = [];
       for (let c = 0; c < NUM_C; c++)
@@ -988,7 +995,9 @@ const initialPlayerId = payload?.playerId ?? '';
 
     function renderBoardPicker() {
       hideClue();
-      setPhase('lobby');
+      // Dedicated phase so SYNC_STATE doesn't blow away the picker scroll
+      // position when nothing meaningful changed.
+      setPhase('picker');
       if (!gameState.board) { renderLobby(); return; }
       const cats = gameState.board.categories || [];
       const maxQ = Math.max(...cats.map((c) => c.questions.length), 0);
@@ -1133,7 +1142,8 @@ const initialPlayerId = payload?.playerId ?? '';
     }
 
     function renderWagerInput({ mode, headline, eyebrow, cap }) {
-      setPhase('lobby');
+      // Phase-marker so SYNC_STATE doesn't re-render and wipe the user's text.
+      setPhase(mode === 'final' ? 'fj-wager' : 'wager');
       const minWager = mode === 'dd' ? 5 : 0;
       const capLine = cap != null
         ? `Wager ${dollars(minWager)} – ${dollars(cap)}`
@@ -1167,8 +1177,25 @@ const initialPlayerId = payload?.playerId ?? '';
       });
     }
 
+    function renderFinalRules(category, myScore) {
+      if (category) showClue(category, 0);
+      setPhase('fj-rules');
+      phaseRoot.innerHTML = `
+        <div class="big-text-area">
+          <div class="big-text-eyebrow">FINAL JEOPARTY</div>
+          <div class="big-text-headline" style="color:var(--gold);font-size:36px;">HOW IT WORKS</div>
+          <div class="big-text-sub" style="margin-top:12px;">① Wager up to <strong style="color:var(--gold)">${dollars(myScore)}</strong></div>
+          <div class="big-text-sub">② The clue drops on the big screen</div>
+          <div class="big-text-sub">③ Type your answer — you have <strong style="color:var(--gold)">30 seconds</strong></div>
+          <div class="big-text-sub">④ Correct = +wager &nbsp;·&nbsp; Wrong = −wager</div>
+          <div class="big-text-sub" style="margin-top:14px;color:var(--dim);font-size:12px;letter-spacing:0.18em;">Waiting for the host to start wagers…</div>
+        </div>
+      `;
+      setFooter('Get ready…', { color: 'var(--gold)', pulse: true });
+    }
+
     function renderAnswerInput() {
-      setPhase('lobby');
+      setPhase('fj-answer');
       phaseRoot.innerHTML = `
         <div class="phase-status">
           <div class="phase-eyebrow">FINAL JEOPARDY</div>
@@ -1493,40 +1520,19 @@ const initialPlayerId = payload?.playerId ?? '';
             setFooter('Watch the screen', { color: 'var(--violet)' });
             return;
           }
-          // Show how-it-works instructions for 20 seconds, then transition to wager input
-          if (msg.category) showClue(msg.category, 0);
-          setPhase('fj-intro');
-          const FJ_RULES_MS = 20000;
-          phaseRoot.innerHTML = `
-            <div class="big-text-area">
-              <div class="big-text-eyebrow">FINAL JEOPARTY</div>
-              <div class="big-text-headline" style="color:var(--gold);font-size:36px;">HOW IT WORKS</div>
-              <div class="big-text-sub" style="margin-top:12px;">① Wager up to <strong style="color:var(--gold)">${dollars(myScore)}</strong></div>
-              <div class="big-text-sub">② The clue drops on the big screen</div>
-              <div class="big-text-sub">③ Type your answer — you have <strong style="color:var(--gold)">30 seconds</strong></div>
-              <div class="big-text-sub">④ Correct = +wager &nbsp;·&nbsp; Wrong = −wager</div>
-              <div class="big-text-sub" style="margin-top:14px;color:var(--dim);font-size:12px;letter-spacing:0.18em;">Wager opens in <span id="fjRulesCountdown">${Math.round(FJ_RULES_MS / 1000)}</span>s</div>
-            </div>
-          `;
-          setFooter('Get ready…', { color: 'var(--gold)', pulse: true });
-          let _rulesLeft = Math.round(FJ_RULES_MS / 1000);
-          const _rulesEl = document.getElementById('fjRulesCountdown');
-          const _rulesTimer = setInterval(() => {
-            _rulesLeft--;
-            const el = document.getElementById('fjRulesCountdown');
-            if (!el || !el.isConnected) { clearInterval(_rulesTimer); return; }
-            el.textContent = String(Math.max(0, _rulesLeft));
-            if (_rulesLeft <= 0) clearInterval(_rulesTimer);
-          }, 1000);
-          setTimeout(() => {
-            clearInterval(_rulesTimer);
-            renderWagerInput({
-              mode: 'final',
-              eyebrow: 'FINAL JEOPARTY',
-              headline: 'Set your wager.',
-              cap: myScore,
-            });
-          }, FJ_RULES_MS);
+          // Show rules indefinitely — host controls when the wager phase opens.
+          renderFinalRules(msg.category, myScore);
+        }
+
+        if (msg.type === 'FINAL_JEOPARDY_WAGER_PHASE') {
+          const myScore = myScoreEntry()?.score ?? 0;
+          if (myScore <= 0) return; // ineligible spectators stay on the spectating screen
+          renderWagerInput({
+            mode: 'final',
+            eyebrow: 'FINAL JEOPARTY',
+            headline: 'Set your wager.',
+            cap: myScore,
+          });
         }
 
         if (msg.type === 'FINAL_JEOPARDY_START') {
@@ -1618,9 +1624,15 @@ const initialPlayerId = payload?.playerId ?? '';
 
       updateHeader();
 
-      // Don't blow away an active mid-question UI on every sync; only re-render passive states.
+      // Don't blow away an active or scrolled UI on every sync; only re-render
+      // truly passive states. Anything where the user is currently interacting
+      // (picking, typing a wager/answer, watching the rules) stays put.
       const phase = phone.dataset.phase;
-      if (phase === 'buzzer' || phase === 'buzzed' || phase === 'lockedout' || phase === 'correct' || phase === 'wrong') return;
+      const STICKY_PHASES = new Set([
+        'buzzer', 'buzzed', 'lockedout', 'correct', 'wrong',
+        'picker', 'wager', 'fj-rules', 'fj-wager', 'fj-answer',
+      ]);
+      if (STICKY_PHASES.has(phase)) return;
 
       // Mid-question state recovery (e.g. after refresh while a clue is open):
       // use the server's snapshot to restore the right player view rather than
@@ -1685,8 +1697,28 @@ const initialPlayerId = payload?.playerId ?? '';
         else renderWaitingForPicker();
       } else if (gameState.status === 'final_jeopardy') {
         gameOverRendered = false;
-        // Server will drive the wager/answer phase via explicit messages
-        if (phase !== 'lobby') renderWaiting('Final Jeopardy — watch the screen.');
+        const myScore = myScoreEntry()?.score ?? 0;
+        const fj = state.finalJeopardy || null;
+        if (myScore <= 0) {
+          setPhase('lockedout');
+          hideClue();
+          phaseRoot.innerHTML = `
+            <div class="big-text-area">
+              <div class="big-text-eyebrow">FINAL JEOPARTY</div>
+              <div class="big-text-headline locked">SPECTATING</div>
+              <div class="big-text-sub">Only players with a positive score play Final Jeoparty.</div>
+            </div>
+          `;
+          setFooter('Watch the screen', { color: 'var(--violet)' });
+        } else if (fj && fj.phase === 'rules') {
+          renderFinalRules(fj.category, myScore);
+        } else if (fj && fj.phase === 'wagering') {
+          renderWagerInput({ mode: 'final', eyebrow: 'FINAL JEOPARTY', headline: 'Set your wager.', cap: myScore });
+        } else if (fj && (fj.phase === 'answering' || fj.phase === 'judging' || fj.phase === 'revealing')) {
+          renderWaiting('Final Jeopardy — watch the screen.');
+        } else {
+          renderWaiting('Final Jeopardy — watch the screen.');
+        }
       } else if (gameState.status === 'finished') {
         if (!gameOverRendered) {
           const winner = [...gameState.scores].sort((a, b) => b.score - a.score)[0];

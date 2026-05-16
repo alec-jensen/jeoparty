@@ -691,32 +691,38 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
 
       if (msg.type === 'START_FINAL_JEOPARDY') {
         bgPlaylist.stop();
-        // Dramatic full-screen FJ announcement for a few seconds before showing the wager state
+        // Hold an indefinite rules screen on the big screen. The host clicks
+        // "Continue to wagers" when ready, which dismisses this overlay.
         let fjAnnounce = document.getElementById('fjAnnounce');
         if (!fjAnnounce) {
           fjAnnounce = document.createElement('div');
           fjAnnounce.id = 'fjAnnounce';
-          fjAnnounce.style.cssText = 'position:absolute;inset:0;background:#0d0a1e;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:80;text-align:center;gap:1.5rem;';
-          fjAnnounce.innerHTML = `
-            <div style="font-family:'Anton',sans-serif;font-size:2.8rem;color:var(--muted);letter-spacing:0.38em;text-transform:uppercase;">Final</div>
-            <div style="font-family:'Anton',sans-serif;font-size:9rem;color:var(--gold);letter-spacing:0.06em;line-height:1;text-shadow:0 0 60px rgba(255,200,61,0.5);">JEOPARTY</div>
-            ${msg.category ? `<div style="font-family:'Anton',sans-serif;font-size:2.4rem;color:var(--ink);letter-spacing:0.14em;margin-top:0.5rem;">${String(msg.category).toUpperCase()}</div>` : ''}
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:1.1rem;color:var(--dim);letter-spacing:0.18em;margin-top:1rem;">Players are setting their wagers…</div>
-          `;
+          fjAnnounce.style.cssText = 'position:absolute;inset:0;background:#0d0a1e;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:80;text-align:center;gap:1.2rem;padding:2rem;';
           document.getElementById('scale-root')?.appendChild(fjAnnounce);
-        } else {
-          fjAnnounce.style.display = 'flex';
         }
-        // Hold the announcement for 20s (matches the player rules window),
-        // then replace with the "wagers in progress" overlay.
-        setTimeout(() => {
-          if (fjAnnounce) fjAnnounce.style.display = 'none';
-          questionOverlay.classList.add('hidden');
-          document.getElementById('qCategory').textContent =
-            msg.category ? `FINAL JEOPARTY · ${msg.category.toUpperCase()}` : 'FINAL JEOPARTY';
-          document.getElementById('qText').textContent = 'Players are entering their wagers…';
-          questionOverlay.classList.remove('hidden');
-        }, 20000);
+        fjAnnounce.innerHTML = `
+          <div style="font-family:'Anton',sans-serif;font-size:2.4rem;color:var(--muted);letter-spacing:0.38em;text-transform:uppercase;">Final</div>
+          <div style="font-family:'Anton',sans-serif;font-size:8rem;color:var(--gold);letter-spacing:0.06em;line-height:1;text-shadow:0 0 60px rgba(255,200,61,0.5);">JEOPARTY</div>
+          ${msg.category ? `<div style="font-family:'Anton',sans-serif;font-size:2.2rem;color:var(--ink);letter-spacing:0.14em;">${String(msg.category).toUpperCase()}</div>` : ''}
+          <div style="margin-top:1.4rem;display:flex;flex-direction:column;gap:0.6rem;font-family:'Space Grotesk',sans-serif;font-size:1.4rem;color:var(--ink);text-align:left;max-width:680px;">
+            <div>① Players wager up to their score</div>
+            <div>② The clue drops here on the big screen</div>
+            <div>③ Players have <strong style="color:var(--gold)">30 seconds</strong> to type an answer</div>
+            <div>④ Correct = +wager &nbsp;·&nbsp; Wrong = −wager</div>
+          </div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:1rem;color:var(--dim);letter-spacing:0.18em;margin-top:1rem;">Waiting for the host to start wagers…</div>
+        `;
+        fjAnnounce.style.display = 'flex';
+      }
+
+      if (msg.type === 'FINAL_JEOPARDY_WAGER_PHASE') {
+        const fjAnnounce = document.getElementById('fjAnnounce');
+        if (fjAnnounce) fjAnnounce.style.display = 'none';
+        questionOverlay.classList.add('hidden');
+        document.getElementById('qCategory').textContent =
+          msg.category ? `FINAL JEOPARTY · ${String(msg.category).toUpperCase()}` : 'FINAL JEOPARTY';
+        document.getElementById('qText').textContent = 'Players are entering their wagers…';
+        questionOverlay.classList.remove('hidden');
       }
 
       if (msg.type === 'FINAL_JEOPARDY_START') {
@@ -1221,6 +1227,19 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       // Detect a round change mid-active (e.g. round 0 → 1) to trigger board re-fill
       if (gameState.status === 'active' && prevStatus === 'active' && gameState.currentRound !== prevRound) {
         pendingBoardReveal = true;
+      }
+
+      // Restore Final Jeopardy rules overlay on reconnect / late mount.
+      if (gameState.status === 'final_jeopardy' && state.finalJeopardy?.phase === 'rules') {
+        // Re-trigger the rules card by dispatching the same payload shape the
+        // START_FINAL_JEOPARDY handler expects.
+        onMessage({ data: JSON.stringify({
+          type: 'START_FINAL_JEOPARDY',
+          category: state.finalJeopardy.category || '',
+        }) });
+      } else if (gameState.status !== 'final_jeopardy') {
+        const fjAnnounce = document.getElementById('fjAnnounce');
+        if (fjAnnounce) fjAnnounce.style.display = 'none';
       }
 
       const inActive = gameState.status === 'active' || gameState.status === 'final_jeopardy' || gameState.status === 'finished';
