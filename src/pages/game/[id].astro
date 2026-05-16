@@ -559,8 +559,15 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       Promise.allSettled([...primes, bgPlaylist.prime()]).then(() => {
         audioEnabled = true;
         audioGate.classList.add('hidden');
-        // If the game is already in lobby state, start the theme
-        if (gameState.status === 'lobby') playSound('theme');
+        // Kick off the right track for whatever state we landed in. The
+        // SYNC_STATE handler only starts music when audio is already
+        // unlocked, so a mid-game refresh would otherwise stay silent
+        // until something else (round change, etc.) re-checks.
+        if (gameState.status === 'lobby') {
+          if (!awaitingIntro) playSound('theme');
+        } else if (gameState.status === 'active') {
+          if (!awaitingIntro && !bgPlaylist.isPlaying()) bgPlaylist.fadeIn(1500);
+        }
       });
     }
     audioGate.addEventListener('click', unlockAudio);
@@ -863,6 +870,7 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
           if (badge) { badge.style.opacity = '1'; badge.firstElementChild?.classList.add('fj-badge-show'); }
           const scoreEl = document.getElementById('fjScoreChange');
           if (scoreEl) scoreEl.classList.add('fj-score-show');
+          playSound(msg.correct ? 'correct' : 'incorrect');
           renderScores();
         }, 2500);
 
@@ -1208,8 +1216,10 @@ const qrSvg = await QRCode.toString(joinUrl, { type: 'svg', color: { dark: '#FFC
       gameState.teamMode = state.teamMode ?? false;
       gameState.status = state.status || 'lobby';
 
-      // Show the audio gate the first time we land on the lobby (audio still locked)
-      if (gameState.status === 'lobby' && !audioEnabled) {
+      // Audio is locked until the user gestures. Show the gate in any state
+      // where audio matters — otherwise a mid-game presenter refresh has no
+      // way to re-enable sound.
+      if (!audioEnabled && gameState.status !== 'finished') {
         audioGate.classList.remove('hidden');
       }
       // Start theme on lobby if not already playing

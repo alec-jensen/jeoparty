@@ -593,6 +593,10 @@ export function boardState(game: ActiveGame) {
           eligiblePlayerIds: Array.from(game.players.entries())
             .filter(([_, p]) => (p.score ?? 0) > 0)
             .map(([id]) => id),
+          // Per-player progress so a SYNC_STATE (e.g. another player
+          // reconnecting) doesn't re-prompt people who already submitted.
+          wageredPlayerIds: Array.from(game.finalJeopardy.wagers.keys()),
+          answeredPlayerIds: Array.from(game.finalJeopardy.answers.keys()),
         }
       : null,
   };

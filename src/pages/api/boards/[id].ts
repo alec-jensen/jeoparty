@@ -72,12 +72,33 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
     finalAnswer: payload.finalAnswer ? String(payload.finalAnswer) : null,
   }).where(eq(schema.boards.id, boardId));
 
+  // used_questions.questionId has no ON DELETE CASCADE, so we must clear any
+  // used_questions rows pointing at questions we're about to remove (directly
+  // or via cascade) before issuing the delete.
+  async function clearUsedQuestionsForQuestionIds(qIds: number[]) {
+    if (!qIds.length) return;
+    await db.delete(schema.usedQuestions).where(inArray(schema.usedQuestions.questionId, qIds));
+  }
+  async function questionIdsUnderCategories(catIds: number[]) {
+    if (!catIds.length) return [] as number[];
+    const rows = await db.select({ id: schema.questions.id }).from(schema.questions).where(inArray(schema.questions.categoryId, catIds));
+    return rows.map(r => r.id);
+  }
+  async function questionIdsUnderRounds(roundIds: number[]) {
+    if (!roundIds.length) return [] as number[];
+    const cats = await db.select({ id: schema.categories.id }).from(schema.categories).where(inArray(schema.categories.roundId, roundIds));
+    return questionIdsUnderCategories(cats.map(c => c.id));
+  }
+
   const incomingRounds: any[] = Array.isArray(payload.rounds) ? payload.rounds : [];
   const keepRoundIds = incomingRounds.filter(r => r.id).map(r => Number(r.id));
   // Delete removed rounds (cascade deletes categories + questions)
   const existingRounds = await db.select({ id: schema.rounds.id }).from(schema.rounds).where(eq(schema.rounds.boardId, boardId));
   const toDeleteRoundIds = existingRounds.map(r => r.id).filter(id => !keepRoundIds.includes(id));
-  if (toDeleteRoundIds.length) await db.delete(schema.rounds).where(inArray(schema.rounds.id, toDeleteRoundIds));
+  if (toDeleteRoundIds.length) {
+    await clearUsedQuestionsForQuestionIds(await questionIdsUnderRounds(toDeleteRoundIds));
+    await db.delete(schema.rounds).where(inArray(schema.rounds.id, toDeleteRoundIds));
+  }
 
   for (let ri = 0; ri < incomingRounds.length; ri++) {
     const round = incomingRounds[ri];
@@ -93,7 +114,10 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
     const keepCatIds = incomingCats.filter(c => c.id).map(c => Number(c.id));
     const existingCats = await db.select({ id: schema.categories.id }).from(schema.categories).where(eq(schema.categories.roundId, roundId));
     const toDeleteCatIds = existingCats.map(c => c.id).filter(id => !keepCatIds.includes(id));
-    if (toDeleteCatIds.length) await db.delete(schema.categories).where(inArray(schema.categories.id, toDeleteCatIds));
+    if (toDeleteCatIds.length) {
+      await clearUsedQuestionsForQuestionIds(await questionIdsUnderCategories(toDeleteCatIds));
+      await db.delete(schema.categories).where(inArray(schema.categories.id, toDeleteCatIds));
+    }
 
     for (let ci = 0; ci < incomingCats.length; ci++) {
       const cat = incomingCats[ci];
@@ -109,7 +133,10 @@ export const PUT: APIRoute = async ({ params, locals, request }) => {
       const keepQIds = incomingQs.filter(q => q.id).map(q => Number(q.id));
       const existingQs = await db.select({ id: schema.questions.id }).from(schema.questions).where(eq(schema.questions.categoryId, catId));
       const toDeleteQIds = existingQs.map(q => q.id).filter(id => !keepQIds.includes(id));
-      if (toDeleteQIds.length) await db.delete(schema.questions).where(inArray(schema.questions.id, toDeleteQIds));
+      if (toDeleteQIds.length) {
+        await clearUsedQuestionsForQuestionIds(toDeleteQIds);
+        await db.delete(schema.questions).where(inArray(schema.questions.id, toDeleteQIds));
+      }
 
       for (let qi = 0; qi < incomingQs.length; qi++) {
         const q = incomingQs[qi];

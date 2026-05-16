@@ -776,6 +776,11 @@ const initialPlayerId = payload?.playerId ?? '';
       .then(r => r.json())
       .then(({ taken }) => {
         takenAvatars = new Set((taken || []).map(t => takenKey(t.avatarColor, t.avatarShape)));
+        // Already-joined players keep whatever avatar the server has on file —
+        // SYNC_STATE will populate it via updateHeader(). Picking a "random
+        // available" avatar here would treat their own combo as taken and
+        // visibly change their avatar on every refresh.
+        if (isJoined) return;
         let saved = null;
         try { saved = localStorage.getItem('jp.avatar'); } catch {}
         const preferred = saved != null ? Math.max(0, Math.min(NUM_COMBOS - 1, parseInt(saved, 10) || 0)) : null;
@@ -1630,9 +1635,24 @@ const initialPlayerId = payload?.playerId ?? '';
       const phase = phone.dataset.phase;
       const STICKY_PHASES = new Set([
         'buzzer', 'buzzed', 'lockedout', 'correct', 'wrong',
-        'picker', 'wager', 'fj-rules', 'fj-wager', 'fj-answer',
+        'wager', 'fj-rules', 'fj-wager', 'fj-answer',
       ]);
+      // 'picker' is sticky only while it's still my turn — otherwise the
+      // previous picker would stay on the (now non-functional) board UI
+      // after someone else gets the answer right.
       if (STICKY_PHASES.has(phase)) return;
+      if (phase === 'picker' && isMyTurn) {
+        // Don't blow away the picker UI, but do reflect newly-used clues so
+        // the buttons disable in place (preserves scroll position).
+        phaseRoot.querySelectorAll('.picker-cell[data-qid]').forEach((btn) => {
+          const qid = Number(btn.dataset.qid);
+          if (gameState.usedQuestions.has(qid) && !btn.disabled) {
+            btn.disabled = true;
+            btn.textContent = '';
+          }
+        });
+        return;
+      }
 
       // Mid-question state recovery (e.g. after refresh while a clue is open):
       // use the server's snapshot to restore the right player view rather than
@@ -1713,7 +1733,15 @@ const initialPlayerId = payload?.playerId ?? '';
         } else if (fj && fj.phase === 'rules') {
           renderFinalRules(fj.category, myScore);
         } else if (fj && fj.phase === 'wagering') {
-          renderWagerInput({ mode: 'final', eyebrow: 'FINAL JEOPARTY', headline: 'Set your wager.', cap: myScore });
+          // If we already submitted, stay on the waiting screen — re-rendering
+          // the input would let the user submit a second wager (and visually
+          // wipes their "Waiting for everyone…" state when someone else
+          // reconnects and triggers a SYNC_STATE).
+          if (Array.isArray(fj.wageredPlayerIds) && fj.wageredPlayerIds.includes(playerId)) {
+            renderWaiting('Waiting for everyone…');
+          } else {
+            renderWagerInput({ mode: 'final', eyebrow: 'FINAL JEOPARTY', headline: 'Set your wager.', cap: myScore });
+          }
         } else if (fj && (fj.phase === 'answering' || fj.phase === 'judging' || fj.phase === 'revealing')) {
           renderWaiting('Final Jeopardy — watch the screen.');
         } else {

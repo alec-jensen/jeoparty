@@ -7,13 +7,7 @@
 
 # playtest results
 
-- [ ] host needs to be able to remove people (partially fixed, needs to tell player they got kicked)
-
-- [x] multiple songs end up playing at once - song state management is incorrect *FIXED*
-
 - [x] player state isnt exactly recovered correctly (although players can still play after a refresh, they just lose the ability to buzz for the current clue) *FIXED PARTIALLY - final jeopardy state is still not recovered correctly, but everything else is*
-
-- [ ] make final jeopardy rules show for 20 seconds - NOT fixed. now it says "look up at the screen", but doesnt show the rules on screen. why dont we make it show the rules on the screen and player devices, but not for a fixed amount of time, show it indefinitely until the host chooses to proceed.
 
 - [ ] if a player client disconnects or breaks or anything during final jeopardy before they submit their answer, the game gets hard locked with no way to continue *not tested if fixed yet, supposedly fixed*
 
@@ -21,8 +15,4 @@
 - [ ] when entering wager for daily double, the text entry gets reset after a time
 - [ ] both of these issues are due to the client dom being rerendered when it shouldnt be, need to fix the state management and component structure to avoid this
 
-- [ ] if board is open on player's screen and game proceeds to final jeopardy, the board stays open and they cant participate in final jeopardy
-
 - [ ] players shouldnt be able to change avatar mid game (they can change it client side only, but that shouldnt be allowed and it shouldnt change for other players)
-
-- [ ] add volume slider

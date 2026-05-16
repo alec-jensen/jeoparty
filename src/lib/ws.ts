@@ -118,10 +118,34 @@ export async function syncGame(gameId: string) {
     console.error(`[WS] syncGame: Game not found for ${gameId}`);
     return;
   }
-  
+
   const state = boardState(game);
   console.log(`[WS] syncGame: Broadcasting state for ${gameId}. Players: ${state.scores.length}`);
   broadcast(game, 'SYNC_STATE', state);
+  // Send the host an augmented copy that carries Final Jeopardy wagers,
+  // answers, judgments, and reveals — these are host-only fields, so they
+  // can't ride the normal broadcast without leaking to players. Without
+  // this, a host refresh during FJ judging or revealing leaves the modal
+  // empty and the game stalls.
+  if (game.finalJeopardy && (game.finalJeopardy.phase === 'judging' || game.finalJeopardy.phase === 'revealing')) {
+    sendToHost(game, 'HOST_FINAL_JEOPARDY_STATE', {
+      category: game.board.finalCategory,
+      questionText: game.board.finalQuestion,
+      correctAnswer: game.board.finalAnswer,
+      results: finalJeopardyEligible(game).map((id) => {
+        const pl = game.players.get(id);
+        return {
+          playerId: id,
+          displayName: pl?.displayName ?? 'Player',
+          wager: game.finalJeopardy?.wagers.get(id) ?? 0,
+          answer: game.finalJeopardy?.answers.get(id) ?? '',
+        };
+      }),
+      judgments: Object.fromEntries(game.finalJeopardy.judgments),
+      revealed: Array.from(game.finalJeopardy.revealed),
+      revealStarted: game.finalJeopardy.phase === 'revealing',
+    });
+  }
 }
 
 function findQuestion(game: ActiveGame, questionId: number) {
@@ -541,8 +565,11 @@ export function initWebSockets(server: import('node:http').Server) {
 
     sockets.set(meta.socketId, { ws, meta });
     console.log(`[WS] Socket connected: ${meta.socketId} (role: ${meta.role}, gameId: ${meta.gameId})`);
-    
-    // Immediate full sync for the new connection
+
+    // Immediate full sync for the new connection. `syncGame` also sends a
+    // host-only HOST_FINAL_JEOPARDY_STATE if we're mid-judging/mid-reveal,
+    // which is how a refreshed host gets back wagers, answers, judgments
+    // and reveal progress.
     await syncGame(gameId);
 
     if (meta.role === 'player' && meta.playerId) {

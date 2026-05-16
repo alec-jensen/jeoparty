@@ -453,7 +453,10 @@ const seed = {
         hideTeamNamingOverlay();
       } else if (msg.type === 'GAME_OVER') {
         showGameOverOverlay(msg);
-      } else if (msg.type === 'FINAL_JEOPARDY_REVEAL') {
+      } else if (msg.type === 'FINAL_JEOPARDY_REVEAL' || msg.type === 'HOST_FINAL_JEOPARDY_STATE') {
+        // HOST_FINAL_JEOPARDY_STATE is sent on every host syncGame while
+        // mid-judging/revealing so a refreshed host re-opens the modal with
+        // the full server state (wagers, answers, judgments, reveals).
         showFinalModal(msg);
       } else if (msg.type === 'FINAL_RESPONSE_REVEAL') {
         if (finalState) { finalState.revealed[msg.playerId] = true; renderFinalResponses(); }
@@ -622,6 +625,47 @@ const seed = {
         lobbyConfig.teamMode = state.teamMode;
         lobbyConfig.numTeams = (state.teams || []).length || lobbyConfig.numTeams;
         applyLobbyConfigUI();
+      }
+
+      // Restore per-question host state from the server snapshot — without
+      // this a refresh during a buzz leaves the host with no openQuestion or
+      // judging panel, so they can't mark the buzzed player correct/wrong
+      // and the game stalls.
+      const aq = state.activeQuestion;
+      const judgePanel = document.getElementById('judgePanel');
+      const skipClueWrap = document.getElementById('skipClueWrap');
+      if (aq) {
+        openQuestion = {
+          questionId: aq.questionId,
+          categoryTitle: aq.categoryTitle,
+          value: aq.value,
+          questionText: aq.questionText,
+          isDailyDouble: !!aq.isDailyDouble,
+        };
+        currentDdWager = aq.dailyDoubleWager ?? null;
+        if (skipClueWrap) skipClueWrap.classList.remove('hidden');
+        if (state.buzzWinner) {
+          renderJudging({
+            playerId: state.buzzWinner.playerId,
+            displayName: state.buzzWinner.displayName,
+            time: null,
+          });
+        } else {
+          buzzWinnerId = null;
+          if (judgePanel) {
+            judgePanel.classList.add('hidden');
+            judgePanel.classList.remove('judge-active');
+          }
+        }
+      } else {
+        openQuestion = null;
+        buzzWinnerId = null;
+        currentDdWager = null;
+        if (judgePanel) {
+          judgePanel.classList.add('hidden');
+          judgePanel.classList.remove('judge-active');
+        }
+        if (skipClueWrap) skipClueWrap.classList.add('hidden');
       }
 
       renderPlayerList();
@@ -902,11 +946,19 @@ const seed = {
     /* ── Final Jeopardy reveal modal ────────────────────────────────────── */
     let finalState = { results: [], judgments: {}, revealed: {} };
     function showFinalModal(msg) {
+      // `judgments`/`revealed`/`revealStarted` are populated on host refresh
+      // so the modal restores mid-judging or mid-reveal state.
+      const revealedMap = {};
+      if (Array.isArray(msg.revealed)) {
+        msg.revealed.forEach((pid) => { revealedMap[pid] = true; });
+      } else if (msg.revealed && typeof msg.revealed === 'object') {
+        Object.assign(revealedMap, msg.revealed);
+      }
       finalState = {
         results: msg.results || [],
-        judgments: {},
-        revealed: {},
-        revealStarted: false,
+        judgments: (msg.judgments && typeof msg.judgments === 'object') ? { ...msg.judgments } : {},
+        revealed: revealedMap,
+        revealStarted: !!msg.revealStarted,
         category: msg.category || '',
         questionText: msg.questionText || '',
         correctAnswer: msg.correctAnswer || '',
