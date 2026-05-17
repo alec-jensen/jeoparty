@@ -682,16 +682,15 @@ const boardTitle = boards[0].title;
     // 2. Category Columns
     cats.forEach((cat, ci) => {
       const title = esc((cat.title || 'CATEGORY').toUpperCase());
-      html += `<div class="grid-col"
-          draggable="true"
-          data-ci="${ci}"
-          ondragstart="onCatDragStart(event, ${ci})"
-          ondragover="onCatDragOver(event)"
-          ondragleave="onCatDragLeave(event)"
-          ondragend="onCatDragEnd(event)"
-          ondrop="onCatDrop(event, ${ci})"
-        >
-        <div class="cat-hdr">
+      html += `<div class="grid-col" data-ci="${ci}">
+        <div class="cat-hdr"
+            draggable="true"
+            ondragstart="onCatDragStart(event, ${ci})"
+            ondragover="onCatDragOver(event, ${ci})"
+            ondragleave="onCatDragLeave(event)"
+            ondragend="onCatDragEnd(event)"
+            ondrop="onCatDrop(event, ${ci})"
+          >
           <button class="cat-hdr-edit" onclick="startEditCat(${ci})">EDIT</button>
           <button class="cat-hdr-del" onclick="removeCategory(${ci})">×</button>
           <div class="cat-hdr-text" id="cat-disp-${ci}">${title}</div>
@@ -797,22 +796,18 @@ const boardTitle = boards[0].title;
     e.dataTransfer.effectAllowed = 'move';
   }
 
-  function onCatDragOver(e) {
+  function onCatDragOver(e, targetCi) {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    const col = e.target.closest('.grid-col');
-    if (!col || col.classList.contains('val-col') || col.classList.contains('add-cat-col')) return false;
-    
-    const targetCi = Number(col.dataset.ci);
-    if (catDragSource !== null && catDragSource !== targetCi) {
-      const round = board.rounds[roundIdx];
-      const temp = round.categories[catDragSource];
-      round.categories[catDragSource] = round.categories[targetCi];
-      round.categories[targetCi] = temp;
-      
-      catDragSource = targetCi;
-      renderGrid();
-    }
+    if (catDragSource === null || catDragSource === targetCi) return false;
+
+    const round = board.rounds[roundIdx];
+    const temp = round.categories[catDragSource];
+    round.categories[catDragSource] = round.categories[targetCi];
+    round.categories[targetCi] = temp;
+
+    catDragSource = targetCi;
+    renderGrid();
     return false;
   }
 
